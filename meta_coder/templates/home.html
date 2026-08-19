@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Projects · Meta-Coder{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-semibold">Projects</h1>
+</div>
+
+<div class="card bg-base-100 border border-base-300 mb-8">
+  <div class="card-body">
+    <h2 class="card-title text-base">New project</h2>
+    <form method="post" action="/{{ token }}/projects" class="flex flex-col sm:flex-row gap-3 mt-2">
+      <input type="text" name="name" placeholder="e.g. Stroop interference meta-analysis"
+             class="input w-full" required maxlength="100">
+      <button type="submit" class="btn btn-primary sm:w-40">Create</button>
+    </form>
+  </div>
+</div>
+
+{% if projects %}
+<div class="overflow-x-auto">
+  <table class="table bg-base-100 border border-base-300">
+    <thead>
+      <tr><th>Name</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for project in projects %}
+      <tr class="hover:bg-base-200">
+        <td>
+          <a href="/{{ token }}/projects/{{ project.project_id }}" class="link link-primary">
+            {{ project.name }}
+          </a>
+        </td>
+        <td class="text-base-content/60">{{ project.created_at }}</td>
+        <td></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-base-content/60">No projects yet. Create one above to get started.</p>
+{% endif %}
+
+{% endblock %}

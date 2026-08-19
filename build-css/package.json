@@ -1,0 +1,13 @@
+{
+  "name": "meta-coder-css-build",
+  "private": true,
+  "description": "Dev-time only: compiles the vendored static/app.css (Tailwind + daisyUI) from the actual Jinja templates. Not run at install or app launch — see this directory's README.",
+  "scripts": {
+    "build": "tailwindcss -i input.css -o ../meta_coder/static/app.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4",
+    "daisyui": "^5",
+    "tailwindcss": "^4"
+  }
+}

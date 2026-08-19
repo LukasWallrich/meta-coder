@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Meta-Coder{% endblock %}</title>
+  <link rel="stylesheet" href="/{{ token }}/static/app.css">
+  <script src="/{{ token }}/static/app.js" defer></script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="min-h-screen bg-base-200 text-base-content">
+  <div class="navbar bg-base-100 border-b border-base-300 px-4 sm:px-6">
+    <div class="flex-1">
+      <a href="/{{ token }}/" class="text-lg font-semibold">Meta-Coder</a>
+    </div>
+  </div>
+  <main class="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

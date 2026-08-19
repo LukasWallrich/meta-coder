@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import BinaryIO
+
+from .projects import ProjectError
+
+
+SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._ -]+")
+MAX_UPLOAD_BYTES = 128 * 1024 * 1024
+
+
+class UploadTooLarge(ProjectError):
+    pass
+
+
+def safe_pdf_name(filename: str) -> str:
+    basename = Path(filename.replace("\\", "/")).name
+    cleaned = SAFE_NAME_RE.sub("_", basename).strip(" .")
+    if not cleaned or cleaned in {".", ".."}:
+        raise ProjectError("A PDF filename is required.")
+    if len(cleaned) > 180:
+        cleaned = Path(cleaned).stem[:160] + Path(cleaned).suffix
+    if Path(cleaned).suffix.lower() != ".pdf":
+        raise ProjectError(f"{basename or 'File'} is not a PDF.")
+    return cleaned
+
+
+def unique_destination(sources_dir: Path, filename: str) -> Path:
+    candidate = sources_dir / filename
+    if not candidate.exists():
+        return candidate
+    stem, suffix = Path(filename).stem, Path(filename).suffix
+    counter = 2
+    while True:
+        candidate = sources_dir / f"{stem} ({counter}){suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def save_pdf_upload(
+    sources_dir: Path,
+    filename: str,
+    stream: BinaryIO,
+    *,
+    max_bytes: int = MAX_UPLOAD_BYTES,
+) -> Path:
+    safe_name = safe_pdf_name(filename)
+    destination = unique_destination(sources_dir, safe_name)
+    partial = destination.with_name(destination.name + ".uploading")
+    written = 0
+    try:
+        with partial.open("xb") as handle:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise UploadTooLarge(
+                        f"{safe_name} exceeds the {max_bytes // (1024 * 1024)} MB upload limit."
+                    )
+                handle.write(chunk)
+        if written < 4:
+            raise ProjectError(f"{safe_name} is empty or not a valid PDF.")
+        with partial.open("rb") as handle:
+            if handle.read(4) != b"%PDF":
+                raise ProjectError(f"{safe_name} is not a valid PDF.")
+        partial.replace(destination)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def list_uploaded_pdfs(sources_dir: Path) -> list[Path]:
+    return sorted(p for p in sources_dir.glob("*.pdf") if p.is_file())
