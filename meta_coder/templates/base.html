@@ -13,6 +13,10 @@
     <div class="flex-1">
       <a href="/{{ token }}/" class="text-lg font-semibold">Meta-Coder</a>
     </div>
+    <a href="/{{ token }}/settings" class="btn btn-ghost btn-sm gap-2">
+      Settings
+      {% if api_key_set %}<span class="badge badge-success badge-xs"></span>{% else %}<span class="badge badge-ghost badge-xs"></span>{% endif %}
+    </a>
   </div>
   <main class="max-w-5xl mx-auto px-4 sm:px-6 py-8">
     {% block content %}{% endblock %}

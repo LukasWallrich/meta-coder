@@ -1,6 +1,9 @@
-"""Sequential run execution (todo.md step 7). No concurrency/pacing yet — that's
-deferred to post-MVP (plan.md Part A7) since sequential removes a whole dimension
-of bugs while the row_id/locator mechanism itself is still being validated.
+"""Run execution: a worker pool sized to the project's configured
+`parallel_requests`, plus a shared pacer enforcing a minimum interval between
+request *starts* across all workers (plan.md Part A7) — "1 request every N
+seconds" means that globally, not per worker. Defaults to parallel_requests=1,
+request_delay_sec=0 (plain sequential, no artificial pacing) unless the user
+configures otherwise on the project's Setup tab.
 """
 
 from __future__ import annotations
@@ -9,6 +12,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +37,28 @@ def _raw_json_path(project: Project, source_pdf: str) -> Path:
 
 def audit_yaml_path(project: Project, source_pdf: str) -> Path:
     return project.audit_dir / f"{_safe_stem(source_pdf)}.yaml"
+
+
+class _RequestPacer:
+    """Enforces a minimum interval between request *starts*, shared across every
+    worker thread — not a per-worker delay, a global one."""
+
+    def __init__(self, delay_sec: int) -> None:
+        self.delay_sec = max(0, int(delay_sec))
+        self._last_started: float | None = None
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        if self.delay_sec <= 0:
+            return
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                remaining = 0.0 if self._last_started is None else self.delay_sec - (now - self._last_started)
+                if remaining <= 0:
+                    self._last_started = now
+                    return
+            time.sleep(min(remaining, 0.1))
 
 
 @dataclass
@@ -96,6 +122,8 @@ class Runner:
         coding_sheet: CodingSheet,
         api_key: str,
         model: str = DEFAULT_MODEL,
+        parallel_requests: int = 1,
+        request_delay_sec: int = 0,
     ) -> RunState:
         if self.is_running(project.project_id):
             raise RuntimeError("This project is already running.")
@@ -112,7 +140,7 @@ class Runner:
 
         thread = threading.Thread(
             target=self._run,
-            args=(project, manual, coding_sheet, api_key, model, state),
+            args=(project, manual, coding_sheet, api_key, model, state, parallel_requests, request_delay_sec),
             daemon=True,
         )
         thread.start()
@@ -126,51 +154,64 @@ class Runner:
         api_key: str,
         model: str,
         state: RunState,
+        parallel_requests: int,
+        request_delay_sec: int,
     ) -> None:
         results_by_pdf: dict[str, ExtractionResult] = {}
-        try:
-            project.audit_dir.mkdir(parents=True, exist_ok=True)
-            for progress in state.pdfs:
-                progress.status = "running"
-                pdf_path = project.sources_dir / progress.source_pdf
-                rows = coding_sheet.rows_for_pdf(progress.source_pdf)
-                result = extract_pdf_effects(
-                    pdf_path=pdf_path,
-                    manual=manual,
-                    rows=rows,
-                    api_key=api_key,
-                    model=model,
-                )
+        results_lock = threading.Lock()
+        pacer = _RequestPacer(request_delay_sec)
+
+        def process_one(progress: PdfProgress) -> None:
+            progress.status = "running"
+            pdf_path = project.sources_dir / progress.source_pdf
+            rows = coding_sheet.rows_for_pdf(progress.source_pdf)
+            pacer.wait()
+            result = extract_pdf_effects(
+                pdf_path=pdf_path,
+                manual=manual,
+                rows=rows,
+                api_key=api_key,
+                model=model,
+            )
+            _raw_json_path(project, progress.source_pdf).write_text(
+                json.dumps(
+                    {
+                        "source_pdf": result.source_pdf,
+                        "status": result.status,
+                        "error": result.error,
+                        "coded_by_row_id": result.coded_by_row_id,
+                        "missing_ids": sorted(result.missing_ids),
+                        "extra_ids": sorted(result.extra_ids),
+                        "raw_response": result.raw_response,
+                        "duration_sec": result.duration_sec,
+                        "input_tokens": result.input_tokens,
+                        "output_tokens": result.output_tokens,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            audit_yaml_path(project, progress.source_pdf).write_text(
+                render_pdf_audit_yaml(
+                    manual=manual, source_pdf=progress.source_pdf, rows=rows, result=result
+                ),
+                encoding="utf-8",
+            )
+            with results_lock:
                 results_by_pdf[progress.source_pdf] = result
                 progress.status = result.status
                 progress.error = result.error
                 progress.missing_ids = sorted(result.missing_ids)
                 progress.extra_ids = sorted(result.extra_ids)
-                _raw_json_path(project, progress.source_pdf).write_text(
-                    json.dumps(
-                        {
-                            "source_pdf": result.source_pdf,
-                            "status": result.status,
-                            "error": result.error,
-                            "coded_by_row_id": result.coded_by_row_id,
-                            "missing_ids": sorted(result.missing_ids),
-                            "extra_ids": sorted(result.extra_ids),
-                            "raw_response": result.raw_response,
-                            "duration_sec": result.duration_sec,
-                            "input_tokens": result.input_tokens,
-                            "output_tokens": result.output_tokens,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-                audit_yaml_path(project, progress.source_pdf).write_text(
-                    render_pdf_audit_yaml(
-                        manual=manual, source_pdf=progress.source_pdf, rows=rows, result=result
-                    ),
-                    encoding="utf-8",
-                )
                 state.processed += 1
+
+        try:
+            project.audit_dir.mkdir(parents=True, exist_ok=True)
+            workers = max(1, min(int(parallel_requests), len(state.pdfs) or 1))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(process_one, progress) for progress in state.pdfs]
+                for future in futures:
+                    future.result()  # re-raises any worker exception here
 
             coded_rows, evidence_rows = collate_results(
                 manual=manual, coding_sheet=coding_sheet, results_by_pdf=results_by_pdf

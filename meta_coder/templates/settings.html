@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Settings · Meta-Coder{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-semibold mb-6">Settings</h1>
+
+<div class="card bg-base-100 border border-base-300 max-w-xl">
+  <div class="card-body">
+    <div class="flex items-center justify-between">
+      <h2 class="card-title text-base">Gemini API key</h2>
+      {% if api_key_set %}
+      <span class="badge badge-success">Set for this session</span>
+      {% else %}
+      <span class="badge badge-ghost">Not set</span>
+      {% endif %}
+    </div>
+    <p class="text-sm text-base-content/60">
+      Used across every project in this running session. Held in memory only —
+      never written to disk, never loaded automatically the next time you launch
+      the app. Get a key at
+      <a href="https://aistudio.google.com/app/apikey" target="_blank" class="link link-primary">Google AI Studio</a>.
+    </p>
+    <form method="post" action="/{{ token }}/settings/api-key" class="flex gap-2 mt-2">
+      <input type="password" name="api_key" placeholder="Paste your Gemini API key"
+             class="input w-full" required>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+    {% if api_key_set %}
+    <form method="post" action="/{{ token }}/settings/api-key/clear" class="mt-2">
+      <button type="submit" class="btn btn-ghost btn-sm">Clear key</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

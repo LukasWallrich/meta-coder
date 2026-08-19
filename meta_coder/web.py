@@ -33,6 +33,7 @@ from .projects import (
     write_manual,
 )
 from .runner import Runner
+from .settings import RunSettings, load_run_settings, save_run_settings
 from .uploads import ProjectError as UploadProjectError  # re-export alias, same type
 from .uploads import list_uploaded_pdfs, save_pdf_upload
 
@@ -140,6 +141,7 @@ def _project_view(runtime: Runtime, project: Project) -> dict:
         "default_model": DEFAULT_MODEL,
         "has_results": coded_csv.is_file() and evidence_csv.is_file(),
         "audit_files": audit_files,
+        "run_settings": load_run_settings(project),
     }
 
 
@@ -171,7 +173,11 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         return TEMPLATES.TemplateResponse(
             request,
             "home.html",
-            {"token": token, "projects": list_projects(root=runtime.projects_root)},
+            {
+                "token": token,
+                "projects": list_projects(root=runtime.projects_root),
+                "api_key_set": bool(runtime.session_api_key),
+            },
         )
 
     @app.post(f"/{token}/projects")
@@ -199,22 +205,49 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             project = runtime.project(project_id)
         except ProjectError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        context = {"token": token, "error": error, **_project_view(runtime, project)}
+        # `error` currently only ever comes from a redirected PDF-upload failure —
+        # jump the sidebar straight to that tab so the message is actually seen.
+        context = {
+            "token": token,
+            "error": error,
+            "force_tab": "sources" if error else None,
+            **_project_view(runtime, project),
+        }
         return TEMPLATES.TemplateResponse(request, "project.html", context)
 
-    @app.post(f"/{token}/projects/{{project_id}}/api-key")
-    async def set_api_key(project_id: str, api_key: str = Form(...)):
-        runtime.project(project_id)  # 404s if invalid
+    @app.get(f"/{token}/settings", response_class=HTMLResponse)
+    async def settings_page(request: Request):
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings.html",
+            {"token": token, "api_key_set": bool(runtime.session_api_key)},
+        )
+
+    @app.post(f"/{token}/settings/api-key")
+    async def set_api_key(api_key: str = Form(...)):
         key = api_key.strip()
         if not key:
             raise HTTPException(status_code=400, detail="Enter a Gemini API key.")
         runtime.session_api_key = key
-        return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
+        return RedirectResponse(f"/{token}/settings", status_code=303)
 
-    @app.post(f"/{token}/projects/{{project_id}}/api-key/clear")
-    async def clear_api_key(project_id: str):
-        runtime.project(project_id)
+    @app.post(f"/{token}/settings/api-key/clear")
+    async def clear_api_key():
         runtime.session_api_key = None
+        return RedirectResponse(f"/{token}/settings", status_code=303)
+
+    @app.post(f"/{token}/projects/{{project_id}}/settings")
+    async def save_project_settings(
+        project_id: str,
+        model: str = Form(DEFAULT_MODEL),
+        parallel_requests: int = Form(1),
+        request_delay_sec: int = Form(0),
+    ):
+        project = runtime.project(project_id)
+        save_run_settings(
+            project,
+            RunSettings(model=model, parallel_requests=parallel_requests, request_delay_sec=request_delay_sec),
+        )
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/manual")
@@ -231,7 +264,12 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             # successfully saved manual — losing in-progress edits on a rejected
             # save would be a bad enough experience that it's worth the extra
             # context override here.
-            context = {"token": token, "error": None, **_project_view(runtime, project)}
+            context = {
+                "token": token,
+                "error": None,
+                "force_tab": "manual",
+                **_project_view(runtime, project),
+            }
             context["manual_error"] = str(exc)
             context["manual_editor_json"] = _embeddable_json(payload)
             return TEMPLATES.TemplateResponse(request, "project.html", context, status_code=400)
@@ -293,13 +331,13 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/run")
-    async def start_run(project_id: str, model: str = Form(DEFAULT_MODEL)):
+    async def start_run(project_id: str):
         project = runtime.project(project_id)
         view = _project_view(runtime, project)
         if not view["can_run"]:
             reasons = []
             if not runtime.session_api_key:
-                reasons.append("a Gemini API key is required")
+                reasons.append("a Gemini API key is required (set it in Settings)")
             if view["manual_error"]:
                 reasons.append("the coding manual has a validation error")
             if view["coding_sheet"] is None or not view["coding_sheet"].is_valid:
@@ -310,12 +348,15 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 reasons.append("a run is already in progress")
             raise HTTPException(status_code=400, detail="Cannot run: " + "; ".join(reasons) + ".")
 
+        settings = view["run_settings"]
         runtime.runner.start(
             project=project,
             manual=view["manual"],
             coding_sheet=view["coding_sheet"],
             api_key=runtime.session_api_key,
-            model=model.strip() or DEFAULT_MODEL,
+            model=settings.model,
+            parallel_requests=settings.parallel_requests,
+            request_delay_sec=settings.request_delay_sec,
         )
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 

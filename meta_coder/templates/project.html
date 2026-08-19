@@ -16,424 +16,498 @@
   </form>
 </div>
 
-{% if error %}
-<div class="alert alert-error mb-6"><span>{{ error }}</span></div>
-{% endif %}
+<div id="tab-root" data-project-id="{{ project.project_id }}" data-force-tab="{{ force_tab or '' }}"
+     class="grid grid-cols-1 lg:grid-cols-[13rem_1fr] gap-6 items-start">
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-  <!-- API key -->
-  <div class="card bg-base-100 border border-base-300">
-    <div class="card-body">
-      <div class="flex items-center justify-between">
-        <h2 class="card-title text-base">Gemini API key</h2>
-        {% if api_key_set %}
-        <span class="badge badge-success">Set for this session</span>
-        {% else %}
-        <span class="badge badge-ghost">Not set</span>
-        {% endif %}
-      </div>
-      <p class="text-sm text-base-content/60">
-        Held in memory for this running session only — never written to disk, never
-        loaded automatically on the next launch.
-      </p>
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/api-key"
-            class="flex gap-2 mt-2">
-        <input type="password" name="api_key" placeholder="Paste your Gemini API key"
-               class="input w-full" required>
-        <button type="submit" class="btn btn-primary">Save</button>
-      </form>
-      {% if api_key_set %}
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/api-key/clear" class="mt-2">
-        <button type="submit" class="btn btn-ghost btn-sm">Clear key</button>
-      </form>
+  <aside>
+    <ul class="menu bg-base-100 border border-base-300 rounded-box w-full">
+      <li><a href="#" data-tab-link="setup">
+        Setup
+        {% if api_key_set %}<span class="badge badge-success badge-xs ml-auto"></span>{% else %}<span class="badge badge-ghost badge-xs ml-auto"></span>{% endif %}
+      </a></li>
+      <li><a href="#" data-tab-link="manual">
+        Coding manual
+        {% if manual_error %}<span class="badge badge-error badge-xs ml-auto"></span>{% else %}<span class="badge badge-success badge-xs ml-auto"></span>{% endif %}
+      </a></li>
+      <li><a href="#" data-tab-link="coding-sheet">
+        Coding sheet
+        {% if coding_sheet and coding_sheet.is_valid and coding_sheet.rows %}<span class="badge badge-success badge-xs ml-auto">{{ coding_sheet.rows | length }}</span>
+        {% elif coding_sheet and not coding_sheet.is_valid %}<span class="badge badge-error badge-xs ml-auto">{{ coding_sheet.issues | length }}</span>
+        {% else %}<span class="badge badge-ghost badge-xs ml-auto"></span>{% endif %}
+      </a></li>
+      <li><a href="#" data-tab-link="sources">
+        Source PDFs
+        <span class="badge badge-ghost badge-xs ml-auto">{{ uploaded_pdfs | length }}</span>
+      </a></li>
+      <li><a href="#" data-tab-link="run">
+        Run
+        {% if is_running %}<span class="badge badge-info badge-xs ml-auto"></span>{% endif %}
+      </a></li>
+      {% if has_results %}
+      <li><a href="#" data-tab-link="results">Results</a></li>
       {% endif %}
+    </ul>
+  </aside>
+
+  <div class="min-w-0">
+
+  {% if error %}
+  <div class="alert alert-error mb-6"><span>{{ error }}</span></div>
+  {% endif %}
+
+  <!-- Setup -->
+  <div data-tab-panel="setup">
+    <div class="card bg-base-100 border border-base-300">
+      <div class="card-body">
+        <h2 class="card-title text-base">Setup</h2>
+
+        <div class="alert {% if api_key_set %}alert-success{% else %}alert-warning{% endif %} mt-1">
+          <span>
+            {% if api_key_set %}Gemini API key is set for this session.{% else %}No Gemini API key set yet.{% endif %}
+            One key is shared across every project —
+            <a href="/{{ token }}/settings" class="link link-primary">manage it in Settings</a>.
+          </span>
+        </div>
+
+        <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/settings" class="mt-3 space-y-3">
+          <div>
+            <label class="fieldset-legend text-sm">Model</label>
+            <input type="text" name="model" value="{{ run_settings.model }}"
+                   class="input w-full font-mono" {% if is_running %}disabled{% endif %}>
+          </div>
+          <div class="flex gap-4 flex-wrap">
+            <div>
+              <label class="fieldset-legend text-sm">Parallel requests</label>
+              <input type="number" name="parallel_requests" value="{{ run_settings.parallel_requests }}"
+                     min="1" max="32" class="input w-32" {% if is_running %}disabled{% endif %}>
+              <p class="text-xs text-base-content/50 mt-1">How many PDFs to process at once.</p>
+            </div>
+            <div>
+              <label class="fieldset-legend text-sm">Request delay (seconds)</label>
+              <input type="number" name="request_delay_sec" value="{{ run_settings.request_delay_sec }}"
+                     min="0" max="3600" class="input w-32" {% if is_running %}disabled{% endif %}>
+              <p class="text-xs text-base-content/50 mt-1">Minimum gap between request starts, shared across all workers.</p>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" {% if is_running %}disabled{% endif %}>Save</button>
+        </form>
+      </div>
     </div>
   </div>
 
   <!-- Coding manual -->
-  <div class="card bg-base-100 border border-base-300 lg:col-span-2">
-    <div class="card-body">
-      <div class="flex items-center justify-between">
-        <h2 class="card-title text-base">Coding manual</h2>
-        {% if manual_error %}
-        <span class="badge badge-error">Invalid</span>
-        {% else %}
-        <span class="badge badge-success">Valid</span>
-        {% endif %}
-      </div>
-      <p class="text-sm text-base-content/60">
-        This is the schema sent to the model — edited here, not as raw YAML.
-      </p>
-
-      <details class="mt-2">
-        <summary class="text-xs text-base-content/50 cursor-pointer">Import an existing manual.yml</summary>
-        <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual/import"
-              enctype="multipart/form-data" class="mt-2"
-              onsubmit="return confirm('Replace the current manual with the imported file? Any results so far will be cleared.');">
-          <label data-dropzone
-                 class="flex flex-col items-center justify-center gap-1 border-2 border-dashed
-                        border-base-300 rounded-box p-4 text-center cursor-pointer transition-colors
-                        hover:border-primary hover:bg-base-200">
-            <input type="file" name="file" accept=".yml,.yaml" required class="sr-only">
-            <span class="text-sm">Drag and drop a coding_manual.yml here, or click to browse</span>
-            <span data-dropzone-filename class="text-sm font-medium text-base-content/70"></span>
-          </label>
-          <button type="submit" class="btn btn-outline btn-sm mt-2">Import and replace</button>
-        </form>
-      </details>
-
-      {% if manual_error %}
-      <div class="alert alert-error mt-2"><span>{{ manual_error }}</span></div>
-      {% endif %}
-
-      {% if manual_editor_json %}
-      <form id="manual-form" method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual" class="mt-3">
-        <input type="hidden" name="manual_json" id="manual-json-input">
-
-        <label class="fieldset-legend text-sm">Name</label>
-        <input type="text" id="manual-name" class="input w-full" required>
-
-        <label class="fieldset-legend text-sm mt-3">Description <span class="text-base-content/50">(optional)</span></label>
-        <textarea id="manual-description" class="textarea w-full" rows="2"></textarea>
-
-        <label class="fieldset-legend text-sm mt-3">
-          Effect definition <span class="text-base-content/50">— what comparison counts as "the effect"?</span>
-        </label>
-        <textarea id="manual-effect-definition" class="textarea w-full" rows="2" required
-                  placeholder="e.g. the difference in response times between compatible and incompatible trials"></textarea>
-
-        <div class="divider text-sm">Coding sheet fields</div>
-        <p class="text-xs text-base-content/60 mb-2">
-          Supplied by the coding sheet CSV — never sent to the model, just rejoined into
-          the output (e.g. authors, year, DOI).
-        </p>
-        <div id="coding-sheet-fields-list"></div>
-        <button type="button" id="add-coding-sheet-field" class="btn btn-ghost btn-sm mt-1">+ Add coding sheet field</button>
-
-        <div class="divider text-sm">Effect fields</div>
-        <p class="text-xs text-base-content/60 mb-2">
-          Coded by the model for every coding sheet row. Add categories to a field to
-          constrain it to a fixed list of values.
-        </p>
-        <div id="effect-fields-list"></div>
-        <button type="button" id="add-effect-field" class="btn btn-ghost btn-sm mt-1">+ Add effect field</button>
-
-        <p class="text-xs text-base-content/50 mt-3">
-          Saving a changed manual clears any results so far in this project (a targeted
-          re-code of just the changed field is a planned improvement, not built yet).
-        </p>
-        <button type="submit" class="btn btn-primary btn-sm mt-2">Validate and save</button>
-      </form>
-
-      <details class="mt-3">
-        <summary class="text-xs text-base-content/50 cursor-pointer">View generated YAML (read-only)</summary>
-        <pre class="text-xs bg-base-200 rounded-box p-3 mt-1 overflow-x-auto">{{ manual_text }}</pre>
-      </details>
-
-      <script type="application/json" id="manual-editor-data">{{ manual_editor_json | safe }}</script>
-
-      <!-- Templates cloned by static/app.js -->
-      <template id="tmpl-coding-sheet-field">
-        <div class="flex gap-2 items-start border-b border-base-200 py-2">
-          <input type="text" class="input input-sm flex-1" data-field="name" placeholder="field name" required>
-          <select class="select select-sm w-32" data-field="type">
-            <option value="string">string</option>
-            <option value="number">number</option>
-            <option value="integer">integer</option>
-            <option value="boolean">boolean</option>
-          </select>
-          <input type="text" class="input input-sm flex-1" data-field="description" placeholder="description (optional)">
-          <button type="button" class="btn btn-ghost btn-xs" data-remove-row>✕</button>
+  <div data-tab-panel="manual" class="hidden">
+    <div class="card bg-base-100 border border-base-300">
+      <div class="card-body">
+        <div class="flex items-center justify-between">
+          <h2 class="card-title text-base">Coding manual</h2>
+          {% if manual_error %}
+          <span class="badge badge-error">Invalid</span>
+          {% else %}
+          <span class="badge badge-success">Valid</span>
+          {% endif %}
         </div>
-      </template>
+        <p class="text-sm text-base-content/60">
+          This is the schema sent to the model — edited here, not as raw YAML.
+        </p>
 
-      <template id="tmpl-effect-field">
-        <div class="border border-base-300 rounded-box p-3 mb-3">
-          <div class="flex gap-2 items-start flex-wrap">
-            <input type="text" class="input input-sm flex-1 min-w-32" data-field="name" placeholder="field name" required>
-            <select class="select select-sm w-28" data-field="type" data-type-select>
+        <details class="mt-2">
+          <summary class="text-xs text-base-content/50 cursor-pointer">Import an existing manual.yml</summary>
+          <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual/import"
+                enctype="multipart/form-data" class="mt-2"
+                onsubmit="return confirm('Replace the current manual with the imported file? Any results so far will be cleared.');">
+            <label data-dropzone
+                   class="flex flex-col items-center justify-center gap-1 border-2 border-dashed
+                          border-base-300 rounded-box p-4 text-center cursor-pointer transition-colors
+                          hover:border-primary hover:bg-base-200">
+              <input type="file" name="file" accept=".yml,.yaml" required class="sr-only">
+              <span class="text-sm">Drop a coding_manual.yml here, or click to browse — replaces immediately</span>
+              <span data-dropzone-filename class="text-sm font-medium text-base-content/70"></span>
+            </label>
+          </form>
+        </details>
+
+        {% if manual_error %}
+        <div class="alert alert-error mt-2"><span>{{ manual_error }}</span></div>
+        {% endif %}
+
+        {% if manual_editor_json %}
+        <form id="manual-form" method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual" class="mt-3">
+          <input type="hidden" name="manual_json" id="manual-json-input">
+
+          <div id="manual-subtabs">
+            <div role="tablist" class="tabs tabs-box mb-3">
+              <a href="#" role="tab" class="tab" data-subtab-link="metadata">Metadata</a>
+              <a href="#" role="tab" class="tab" data-subtab-link="coding-sheet-fields">Coding sheet fields</a>
+              <a href="#" role="tab" class="tab" data-subtab-link="effects">Effect fields</a>
+            </div>
+
+            <div data-subtab-panel="metadata">
+              <label class="fieldset-legend text-sm">Name</label>
+              <input type="text" id="manual-name" class="input w-full" required>
+
+              <label class="fieldset-legend text-sm mt-3">Description <span class="text-base-content/50">(optional)</span></label>
+              <textarea id="manual-description" class="textarea w-full" rows="2"></textarea>
+
+              <label class="fieldset-legend text-sm mt-3">
+                Effect definition <span class="text-base-content/50">— what comparison counts as "the effect"?</span>
+              </label>
+              <textarea id="manual-effect-definition" class="textarea w-full" rows="2" required
+                        placeholder="e.g. the difference in response times between compatible and incompatible trials"></textarea>
+            </div>
+
+            <div data-subtab-panel="coding-sheet-fields" class="hidden">
+              <p class="text-xs text-base-content/60 mb-2">
+                Supplied by the coding sheet CSV — never sent to the model, just rejoined into
+                the output (e.g. authors, year, DOI).
+              </p>
+              <div id="coding-sheet-fields-list"></div>
+              <button type="button" id="add-coding-sheet-field" class="btn btn-ghost btn-sm mt-1">+ Add coding sheet field</button>
+            </div>
+
+            <div data-subtab-panel="effects" class="hidden">
+              <p class="text-xs text-base-content/60 mb-2">
+                Coded by the model for every coding sheet row. Add categories to a field to
+                constrain it to a fixed list of values. Click a field's title to expand it.
+              </p>
+              <div id="effect-fields-list"></div>
+              <button type="button" id="add-effect-field" class="btn btn-ghost btn-sm mt-1">+ Add effect field</button>
+            </div>
+          </div>
+
+          <p class="text-xs text-base-content/50 mt-3">
+            Saving a changed manual clears any results so far in this project (a targeted
+            re-code of just the changed field is a planned improvement, not built yet).
+          </p>
+          <button type="submit" class="btn btn-primary btn-sm mt-2">Validate and save</button>
+        </form>
+
+        <details class="mt-3">
+          <summary class="text-xs text-base-content/50 cursor-pointer">View generated YAML (read-only)</summary>
+          <pre class="text-xs bg-base-200 rounded-box p-3 mt-1 overflow-x-auto">{{ manual_text }}</pre>
+        </details>
+
+        <script type="application/json" id="manual-editor-data">{{ manual_editor_json | safe }}</script>
+
+        <!-- Templates cloned by static/app.js -->
+        <template id="tmpl-coding-sheet-field">
+          <div class="flex gap-2 items-start border-b border-base-200 py-2">
+            <input type="text" class="input input-sm flex-1" data-field="name" placeholder="field name" required>
+            <select class="select select-sm w-32" data-field="type">
               <option value="string">string</option>
               <option value="number">number</option>
               <option value="integer">integer</option>
               <option value="boolean">boolean</option>
             </select>
-            <label class="label cursor-pointer gap-1 text-sm">
-              <input type="checkbox" class="checkbox checkbox-sm" data-field="required"> required
-            </label>
-            <label class="label cursor-pointer gap-1 text-sm">
-              <input type="checkbox" class="checkbox checkbox-sm" data-field="evidence_required"> needs evidence
-            </label>
-            <button type="button" class="btn btn-ghost btn-xs ml-auto" data-remove-row>✕ Remove field</button>
+            <input type="text" class="input input-sm flex-1" data-field="description" placeholder="description (optional)">
+            <button type="button" class="btn btn-ghost btn-xs" data-remove-row>✕</button>
           </div>
-          <textarea class="textarea textarea-sm w-full mt-2" rows="2" data-field="description"
-                    placeholder="What should the model look for? (shown to the model as its instruction for this field)"></textarea>
+        </template>
 
-          <div data-levels-section class="mt-2 hidden">
-            <p class="text-xs text-base-content/60 mb-1">Categories (the model must pick exactly one):</p>
-            <div data-levels-list></div>
-            <button type="button" class="btn btn-ghost btn-xs" data-add-level>+ Add category</button>
+        <template id="tmpl-effect-field">
+          <details class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box mb-2">
+            <summary class="collapse-title text-sm font-medium py-3 pr-10">
+              <span data-summary-name>Untitled field</span>
+              <span class="badge badge-ghost badge-sm ml-2" data-summary-type>string</span>
+            </summary>
+            <div class="collapse-content">
+              <div class="flex gap-2 items-start flex-wrap">
+                <input type="text" class="input input-sm flex-1 min-w-32" data-field="name" placeholder="field name" required>
+                <select class="select select-sm w-28" data-field="type" data-type-select>
+                  <option value="string">string</option>
+                  <option value="number">number</option>
+                  <option value="integer">integer</option>
+                  <option value="boolean">boolean</option>
+                </select>
+                <label class="label cursor-pointer gap-1 text-sm">
+                  <input type="checkbox" class="checkbox checkbox-sm" data-field="required"> required
+                </label>
+                <label class="label cursor-pointer gap-1 text-sm">
+                  <input type="checkbox" class="checkbox checkbox-sm" data-field="evidence_required"> needs evidence
+                </label>
+                <button type="button" class="btn btn-ghost btn-xs ml-auto" data-remove-row>✕ Remove field</button>
+              </div>
+              <textarea class="textarea textarea-sm w-full mt-2" rows="2" data-field="description"
+                        placeholder="What should the model look for? (shown to the model as its instruction for this field)"></textarea>
+
+              <div data-levels-section class="mt-2 hidden">
+                <p class="text-xs text-base-content/60 mb-1">Categories (the model must pick exactly one):</p>
+                <div data-levels-list></div>
+                <button type="button" class="btn btn-ghost btn-xs" data-add-level>+ Add category</button>
+              </div>
+            </div>
+          </details>
+        </template>
+
+        <template id="tmpl-level">
+          <div class="flex gap-2 items-start mb-1">
+            <input type="text" class="input input-xs flex-1" data-field="value" placeholder="category label" required>
+            <input type="text" class="input input-xs flex-1" data-field="description" placeholder="what distinguishes this category (optional)">
+            <button type="button" class="btn btn-ghost btn-xs" data-remove-row>✕</button>
           </div>
-        </div>
-      </template>
+        </template>
 
-      <template id="tmpl-level">
-        <div class="flex gap-2 items-start mb-1">
-          <input type="text" class="input input-xs flex-1" data-field="value" placeholder="category label" required>
-          <input type="text" class="input input-xs flex-1" data-field="description" placeholder="what distinguishes this category (optional)">
-          <button type="button" class="btn btn-ghost btn-xs" data-remove-row>✕</button>
-        </div>
-      </template>
-
-      {% else %}
-      <p class="text-sm text-base-content/70 mt-2">
-        The saved manual can't be read as a valid schema, so there's nothing to load into
-        the editor. This normally only happens if the file was edited outside the app.
-      </p>
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual/reset"
-            onsubmit="return confirm('Replace the current manual with a blank starter manual? Any results so far will be cleared.');">
-        <button type="submit" class="btn btn-outline btn-error btn-sm mt-2">Reset to a blank manual</button>
-      </form>
-      {% endif %}
+        {% else %}
+        <p class="text-sm text-base-content/70 mt-2">
+          The saved manual can't be read as a valid schema, so there's nothing to load into
+          the editor. This normally only happens if the file was edited outside the app.
+        </p>
+        <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual/reset"
+              onsubmit="return confirm('Replace the current manual with a blank starter manual? Any results so far will be cleared.');">
+          <button type="submit" class="btn btn-outline btn-error btn-sm mt-2">Reset to a blank manual</button>
+        </form>
+        {% endif %}
+      </div>
     </div>
   </div>
 
   <!-- Coding sheet -->
-  <div class="card bg-base-100 border border-base-300 lg:col-span-2">
-    <div class="card-body">
-      <div class="flex items-center justify-between">
-        <h2 class="card-title text-base">Coding sheet</h2>
-        {% if coding_sheet is none %}
-        <span class="badge badge-ghost">Fix the manual first</span>
-        {% elif coding_sheet.is_valid and coding_sheet.rows %}
-        <span class="badge badge-success">{{ coding_sheet.rows | length }} row(s) ready</span>
-        {% elif not coding_sheet.is_valid %}
-        <span class="badge badge-error">{{ coding_sheet.issues | length }} issue(s)</span>
-        {% else %}
-        <span class="badge badge-ghost">Empty</span>
-        {% endif %}
-      </div>
-      <p class="text-sm text-base-content/60">
-        CSV with columns <code>row_id</code>, <code>source_pdf</code>, <code>locator</code>{% if manual and manual.coding_sheet_fields %}, {{ manual.coding_sheet_fields.keys() | join(', ') }}{% endif %}
-        — one row per effect/experiment/condition to code.
-      </p>
+  <div data-tab-panel="coding-sheet" class="hidden">
+    <div class="card bg-base-100 border border-base-300">
+      <div class="card-body">
+        <div class="flex items-center justify-between">
+          <h2 class="card-title text-base">Coding sheet</h2>
+          {% if coding_sheet is none %}
+          <span class="badge badge-ghost">Fix the manual first</span>
+          {% elif coding_sheet.is_valid and coding_sheet.rows %}
+          <span class="badge badge-success">{{ coding_sheet.rows | length }} row(s) ready</span>
+          {% elif not coding_sheet.is_valid %}
+          <span class="badge badge-error">{{ coding_sheet.issues | length }} issue(s)</span>
+          {% else %}
+          <span class="badge badge-ghost">Empty</span>
+          {% endif %}
+        </div>
+        <p class="text-sm text-base-content/60">
+          CSV with columns <code>row_id</code>, <code>source_pdf</code>, <code>locator</code>{% if manual and manual.coding_sheet_fields %}, {{ manual.coding_sheet_fields.keys() | join(', ') }}{% endif %}
+          — one row per effect/experiment/condition to code.
+        </p>
 
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet"
-            enctype="multipart/form-data" class="mt-2">
-        <label data-dropzone
-               class="flex flex-col items-center justify-center gap-1 border-2 border-dashed
-                      border-base-300 rounded-box p-6 text-center cursor-pointer transition-colors
-                      hover:border-primary hover:bg-base-200">
-          <input type="file" name="file" accept=".csv" required class="sr-only">
-          <span class="text-sm">Drag and drop a CSV file here, or click to browse</span>
-          <span data-dropzone-filename class="text-sm font-medium text-base-content/70"></span>
-        </label>
-        <button type="submit" class="btn btn-primary btn-sm mt-2">Upload CSV</button>
-      </form>
+        <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet"
+              enctype="multipart/form-data" class="mt-2">
+          <label data-dropzone
+                 class="flex flex-col items-center justify-center gap-1 border-2 border-dashed
+                        border-base-300 rounded-box p-6 text-center cursor-pointer transition-colors
+                        hover:border-primary hover:bg-base-200">
+            <input type="file" name="file" accept=".csv" required class="sr-only">
+            <span class="text-sm">Drop a CSV file here, or click to browse — uploads immediately</span>
+            <span data-dropzone-filename class="text-sm font-medium text-base-content/70"></span>
+          </label>
+        </form>
 
-      {% if coding_sheet and coding_sheet.issues %}
-      <div class="alert alert-error mt-3 flex-col items-start">
-        <span class="font-medium">These must be fixed before a run can start:</span>
-        <ul class="list-disc list-inside text-sm">
-          {% for issue in coding_sheet.issues %}
-          <li>{% if issue.row_number %}Row {{ issue.row_number }}: {% endif %}{{ issue.message }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
-
-      {% if coding_sheet and coding_sheet.warnings %}
-      <div class="alert alert-warning mt-3 flex-col items-start">
-        <ul class="list-disc list-inside text-sm">
-          {% for warning in coding_sheet.warnings %}
-          <li>{{ warning.message }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
-
-      {% if orphan_pdfs %}
-      <div class="alert alert-warning mt-3">
-        <span>{{ orphan_pdfs | length }} uploaded PDF(s) have no coding sheet rows and will be
-          skipped: {{ orphan_pdfs | join(', ') }}</span>
-      </div>
-      {% endif %}
-
-      {% if coding_sheet and coding_sheet.rows %}
-      <div class="overflow-x-auto mt-3">
-        <table class="table table-sm bg-base-100 border border-base-300">
-          <thead>
-            <tr>
-              <th>row_id</th><th>source_pdf</th><th>locator</th>
-              {% for col in manual.coding_sheet_fields.keys() %}<th>{{ col }}</th>{% endfor %}
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in coding_sheet.rows[:25] %}
-            <tr>
-              <td>{{ row.row_id }}</td><td>{{ row.source_pdf }}</td><td>{{ row.locator }}</td>
-              {% for col in manual.coding_sheet_fields.keys() %}<td>{{ row.fields.get(col, '') }}</td>{% endfor %}
-            </tr>
+        {% if coding_sheet and coding_sheet.issues %}
+        <div class="alert alert-error mt-3 flex-col items-start">
+          <span class="font-medium">These must be fixed before a run can start:</span>
+          <ul class="list-disc list-inside text-sm">
+            {% for issue in coding_sheet.issues %}
+            <li>{% if issue.row_number %}Row {{ issue.row_number }}: {% endif %}{{ issue.message }}</li>
             {% endfor %}
-          </tbody>
-        </table>
-        {% if coding_sheet.rows | length > 25 %}
-        <p class="text-xs text-base-content/50 mt-1">Showing the first 25 of {{ coding_sheet.rows | length }} rows.</p>
+          </ul>
+        </div>
+        {% endif %}
+
+        {% if coding_sheet and coding_sheet.warnings %}
+        <div class="alert alert-warning mt-3 flex-col items-start">
+          <ul class="list-disc list-inside text-sm">
+            {% for warning in coding_sheet.warnings %}
+            <li>{{ warning.message }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
+        {% if orphan_pdfs %}
+        <div class="alert alert-warning mt-3">
+          <span>{{ orphan_pdfs | length }} uploaded PDF(s) have no coding sheet rows and will be
+            skipped: {{ orphan_pdfs | join(', ') }}</span>
+        </div>
+        {% endif %}
+
+        {% if coding_sheet and coding_sheet.rows %}
+        <div class="overflow-x-auto mt-3">
+          <table class="table table-sm bg-base-100 border border-base-300">
+            <thead>
+              <tr>
+                <th>row_id</th><th>source_pdf</th><th>locator</th>
+                {% for col in manual.coding_sheet_fields.keys() %}<th>{{ col }}</th>{% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in coding_sheet.rows[:25] %}
+              <tr>
+                <td>{{ row.row_id }}</td><td>{{ row.source_pdf }}</td><td>{{ row.locator }}</td>
+                {% for col in manual.coding_sheet_fields.keys() %}<td>{{ row.fields.get(col, '') }}</td>{% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% if coding_sheet.rows | length > 25 %}
+          <p class="text-xs text-base-content/50 mt-1">Showing the first 25 of {{ coding_sheet.rows | length }} rows.</p>
+          {% endif %}
+        </div>
         {% endif %}
       </div>
-      {% endif %}
     </div>
   </div>
 
   <!-- PDF uploads -->
-  <div class="card bg-base-100 border border-base-300 lg:col-span-2">
-    <div class="card-body">
-      <div class="flex items-center justify-between">
-        <h2 class="card-title text-base">Source PDFs</h2>
-        <span class="badge badge-ghost">{{ uploaded_pdfs | length }} uploaded</span>
-      </div>
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/uploads"
-            enctype="multipart/form-data" class="mt-2">
-        <label data-dropzone
-               class="flex flex-col items-center justify-center gap-1 border-2 border-dashed
-                      border-base-300 rounded-box p-6 text-center cursor-pointer transition-colors
-                      hover:border-primary hover:bg-base-200">
-          <input type="file" name="files" accept=".pdf" multiple required class="sr-only">
-          <span class="text-sm">Drag and drop PDF files here, or click to browse</span>
-          <span data-dropzone-filename class="text-sm font-medium text-base-content/70"></span>
-        </label>
-        <button type="submit" class="btn btn-primary btn-sm mt-2">Upload</button>
-      </form>
-
-      {% if uploaded_pdfs %}
-      <div class="overflow-x-auto mt-3">
-        <table class="table table-sm bg-base-100 border border-base-300">
-          <tbody>
-            {% for pdf in uploaded_pdfs %}
-            <tr>
-              <td>{{ pdf.name }}</td>
-              <td class="text-base-content/60">{{ (pdf.stat().st_size / 1024) | round(1) }} KB</td>
-              <td class="text-right">
-                <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/uploads/delete">
-                  <input type="hidden" name="filename" value="{{ pdf.name }}">
-                  <button type="submit" class="btn btn-ghost btn-xs">Remove</button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- Run -->
-  <div class="card bg-base-100 border border-base-300 lg:col-span-2">
-    <div class="card-body">
-      <h2 class="card-title text-base">Run</h2>
-
-      {% if not can_run and not is_running %}
-      <div class="alert alert-warning">
-        <ul class="list-disc list-inside text-sm">
-          {% if not api_key_set %}<li>Set a Gemini API key above.</li>{% endif %}
-          {% if manual_error %}<li>Fix the coding manual.</li>{% endif %}
-          {% if coding_sheet is none or not coding_sheet.is_valid %}<li>Fix the coding sheet issues above.</li>{% endif %}
-          {% if coding_sheet and coding_sheet.is_valid and not coding_sheet.rows %}<li>Add at least one row to the coding sheet.</li>{% endif %}
-        </ul>
-      </div>
-      {% endif %}
-
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/run"
-            class="flex flex-col sm:flex-row gap-2 items-start sm:items-center mt-2">
-        <input type="text" name="model" value="{{ default_model }}"
-               class="input input-sm w-full sm:w-64 font-mono" {% if is_running %}disabled{% endif %}>
-        <button type="submit" class="btn btn-primary btn-sm" {% if not can_run %}disabled{% endif %}>
-          {% if is_running %}Running…{% else %}Run extraction{% endif %}
-        </button>
-      </form>
-
-      {% if run_state %}
-      <div class="mt-4">
-        <div class="flex items-center gap-3 mb-2">
-          {% if is_running %}<span class="loading loading-spinner loading-sm"></span>{% endif %}
-          <span class="text-sm">{{ run_state.processed }} / {{ run_state.total }} PDFs processed
-            — {{ run_state.status }}</span>
+  <div data-tab-panel="sources" class="hidden">
+    <div class="card bg-base-100 border border-base-300">
+      <div class="card-body">
+        <div class="flex items-center justify-between">
+          <h2 class="card-title text-base">Source PDFs</h2>
+          <span class="badge badge-ghost">{{ uploaded_pdfs | length }} uploaded</span>
         </div>
-        <progress class="progress progress-primary w-full"
-                  value="{{ run_state.processed }}" max="{{ run_state.total if run_state.total else 1 }}"></progress>
+        <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/uploads"
+              enctype="multipart/form-data" class="mt-2">
+          <label data-dropzone
+                 class="flex flex-col items-center justify-center gap-1 border-2 border-dashed
+                        border-base-300 rounded-box p-6 text-center cursor-pointer transition-colors
+                        hover:border-primary hover:bg-base-200">
+            <input type="file" name="files" accept=".pdf" multiple required class="sr-only">
+            <span class="text-sm">Drop PDF files here, or click to browse — uploads immediately</span>
+            <span data-dropzone-filename class="text-sm font-medium text-base-content/70"></span>
+          </label>
+        </form>
 
-        {% if run_state.error %}
-        <div class="alert alert-error mt-3"><span>{{ run_state.error }}</span></div>
-        {% endif %}
-
+        {% if uploaded_pdfs %}
         <div class="overflow-x-auto mt-3">
           <table class="table table-sm bg-base-100 border border-base-300">
-            <thead><tr><th>PDF</th><th>Status</th><th>Detail</th></tr></thead>
             <tbody>
-              {% for pdf in run_state.pdfs %}
+              {% for pdf in uploaded_pdfs %}
               <tr>
-                <td>{{ pdf.source_pdf }}</td>
-                <td>
-                  {% if pdf.status == 'ok' %}<span class="badge badge-success">ok</span>
-                  {% elif pdf.status == 'needs_review' %}<span class="badge badge-warning">needs review</span>
-                  {% elif pdf.status == 'error' %}<span class="badge badge-error">error</span>
-                  {% elif pdf.status == 'running' %}<span class="badge badge-info">running</span>
-                  {% else %}<span class="badge badge-ghost">pending</span>
-                  {% endif %}
-                </td>
-                <td class="text-sm text-base-content/70">
-                  {% if pdf.error %}{{ pdf.error }}{% endif %}
-                  {% if pdf.missing_ids %} missing: {{ pdf.missing_ids | join(', ') }}{% endif %}
-                  {% if pdf.extra_ids %} unexpected: {{ pdf.extra_ids | join(', ') }}{% endif %}
+                <td>{{ pdf.name }}</td>
+                <td class="text-base-content/60">{{ (pdf.stat().st_size / 1024) | round(1) }} KB</td>
+                <td class="text-right">
+                  <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/uploads/delete">
+                    <input type="hidden" name="filename" value="{{ pdf.name }}">
+                    <button type="submit" class="btn btn-ghost btn-xs">Remove</button>
+                  </form>
                 </td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+        {% endif %}
       </div>
-      {% endif %}
+    </div>
+  </div>
+
+  <!-- Run -->
+  <div data-tab-panel="run" class="hidden">
+    <div class="card bg-base-100 border border-base-300">
+      <div class="card-body">
+        <h2 class="card-title text-base">Run</h2>
+
+        {% if not can_run and not is_running %}
+        <div class="alert alert-warning">
+          <ul class="list-disc list-inside text-sm">
+            {% if not api_key_set %}<li>Set a Gemini API key in Settings.</li>{% endif %}
+            {% if manual_error %}<li>Fix the coding manual.</li>{% endif %}
+            {% if coding_sheet is none or not coding_sheet.is_valid %}<li>Fix the coding sheet issues.</li>{% endif %}
+            {% if coding_sheet and coding_sheet.is_valid and not coding_sheet.rows %}<li>Add at least one row to the coding sheet.</li>{% endif %}
+          </ul>
+        </div>
+        {% endif %}
+
+        <p class="text-sm text-base-content/60 mt-1">
+          <span class="font-mono">{{ run_settings.model }}</span>
+          · {{ run_settings.parallel_requests }} parallel request{{ 's' if run_settings.parallel_requests != 1 else '' }}
+          · {{ run_settings.request_delay_sec }}s delay between starts
+          — <a href="#" data-tab-link="setup" class="link link-primary">change in Setup</a>
+        </p>
+
+        <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/run" class="mt-2">
+          <button type="submit" class="btn btn-primary btn-sm" {% if not can_run %}disabled{% endif %}>
+            {% if is_running %}Running…{% else %}Run extraction{% endif %}
+          </button>
+        </form>
+
+        {% if run_state %}
+        <div class="mt-4">
+          <div class="flex items-center gap-3 mb-2">
+            {% if is_running %}<span class="loading loading-spinner loading-sm"></span>{% endif %}
+            <span class="text-sm">{{ run_state.processed }} / {{ run_state.total }} PDFs processed
+              — {{ run_state.status }}</span>
+          </div>
+          <progress class="progress progress-primary w-full"
+                    value="{{ run_state.processed }}" max="{{ run_state.total if run_state.total else 1 }}"></progress>
+
+          {% if run_state.error %}
+          <div class="alert alert-error mt-3"><span>{{ run_state.error }}</span></div>
+          {% endif %}
+
+          <div class="overflow-x-auto mt-3">
+            <table class="table table-sm bg-base-100 border border-base-300">
+              <thead><tr><th>PDF</th><th>Status</th><th>Detail</th></tr></thead>
+              <tbody>
+                {% for pdf in run_state.pdfs %}
+                <tr>
+                  <td>{{ pdf.source_pdf }}</td>
+                  <td>
+                    {% if pdf.status == 'ok' %}<span class="badge badge-success">ok</span>
+                    {% elif pdf.status == 'needs_review' %}<span class="badge badge-warning">needs review</span>
+                    {% elif pdf.status == 'error' %}<span class="badge badge-error">error</span>
+                    {% elif pdf.status == 'running' %}<span class="badge badge-info">running</span>
+                    {% else %}<span class="badge badge-ghost">pending</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-sm text-base-content/70">
+                    {% if pdf.error %}{{ pdf.error }}{% endif %}
+                    {% if pdf.missing_ids %} missing: {{ pdf.missing_ids | join(', ') }}{% endif %}
+                    {% if pdf.extra_ids %} unexpected: {{ pdf.extra_ids | join(', ') }}{% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+      </div>
     </div>
   </div>
 
   <!-- Results -->
   {% if has_results %}
-  <div class="card bg-base-100 border border-base-300 lg:col-span-2">
-    <div class="card-body">
-      <h2 class="card-title text-base">Results</h2>
-      <p class="text-sm text-base-content/60">
-        <code>evidence.csv</code> has the same shape as <code>coded_data.csv</code>, with each
-        cell replaced by the page/quote that supports it — verify a few rows against the source
-        PDF before trusting the coded values.
-      </p>
-      <div class="flex gap-2 mt-2">
-        <a href="/{{ token }}/projects/{{ project.project_id }}/download/coded" class="btn btn-outline btn-sm">
-          Download coded_data.csv
-        </a>
-        <a href="/{{ token }}/projects/{{ project.project_id }}/download/evidence" class="btn btn-outline btn-sm">
-          Download evidence.csv
-        </a>
-      </div>
+  <div data-tab-panel="results" class="hidden">
+    <div class="card bg-base-100 border border-base-300">
+      <div class="card-body">
+        <h2 class="card-title text-base">Results</h2>
+        <p class="text-sm text-base-content/60">
+          <code>evidence.csv</code> has the same shape as <code>coded_data.csv</code>, with each
+          cell replaced by the page/quote that supports it — verify a few rows against the source
+          PDF before trusting the coded values.
+        </p>
+        <div class="flex gap-2 mt-2">
+          <a href="/{{ token }}/projects/{{ project.project_id }}/download/coded" class="btn btn-outline btn-sm">
+            Download coded_data.csv
+          </a>
+          <a href="/{{ token }}/projects/{{ project.project_id }}/download/evidence" class="btn btn-outline btn-sm">
+            Download evidence.csv
+          </a>
+        </div>
 
-      {% if audit_files %}
-      <div class="divider text-sm">Per-PDF audit (codes + evidence together)</div>
-      <p class="text-sm text-base-content/60">
-        One readable file per PDF — easier to actually read than scanning across dozens
-        of CSV columns.
-      </p>
-      <ul class="mt-2 space-y-1">
-        {% for audit_file in audit_files %}
-        <li>
-          <a href="/{{ token }}/projects/{{ project.project_id }}/audit/{{ audit_file.name }}"
-             target="_blank" class="link link-primary text-sm">{{ audit_file.name }}</a>
-        </li>
-        {% endfor %}
-      </ul>
-      {% endif %}
+        {% if audit_files %}
+        <div class="divider text-sm">Per-PDF audit (codes + evidence together)</div>
+        <p class="text-sm text-base-content/60">
+          One readable file per PDF — easier to actually read than scanning across dozens
+          of CSV columns.
+        </p>
+        <ul class="mt-2 space-y-1">
+          {% for audit_file in audit_files %}
+          <li>
+            <a href="/{{ token }}/projects/{{ project.project_id }}/audit/{{ audit_file.name }}"
+               target="_blank" class="link link-primary text-sm">{{ audit_file.name }}</a>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
     </div>
   </div>
   {% endif %}
 
+  </div>
 </div>
 {% endblock %}

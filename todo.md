@@ -105,12 +105,28 @@ part of the MVP, not a later addition.
 ---
 
 ### 9. Credentials done properly (`plan.md` Part A5)
-- OS keyring storage, save/unlock/delete actions, session-only fallback marking,
-  chmod-restricted non-secret preferences file.
+- **Partially done ✅, pulled forward per explicit instruction**: a global
+  `/settings` page now holds the API key (was per-project-tab before, which was
+  misleading — the underlying value was already a single session-wide value, not
+  per-project). Still session-only in server memory, not the OS keyring — that
+  part of this step (save/unlock/delete against the OS credential store,
+  session-only fallback marking, chmod-restricted preferences file) is still
+  outstanding.
 
-### 10. Concurrency, pacing, live progress, cancel (Part A7)
-- Worker pool sized to `min(parallel_requests, pending PDFs)`, shared request pacer,
-  SSE live progress, cooperative cancellation.
+### 10. Concurrency, pacing — done ✅ (live progress/cancel still outstanding)
+- **Pulled forward per explicit instruction**: the runner now uses a real worker
+  pool (`ThreadPoolExecutor`, sized to `min(parallel_requests, pending PDFs)`) and
+  a shared `_RequestPacer` enforcing a minimum interval between request *starts*
+  globally across workers, not per-worker — proven in
+  `tests/test_runner_concurrency.py` (results stay correctly attributed to the
+  right PDF under real concurrent execution; the pacer's delay is global, not
+  per-worker). `model`/`parallel_requests`/`request_delay_sec` are now persisted
+  per project (`meta_coder/settings.py`) and edited on the project's Setup tab —
+  the reason to build real concurrency now rather than leave the setting inert:
+  a "parallel requests" field that's silently ignored by a still-sequential
+  runner would be actively misleading UI.
+- Still outstanding from this step: SSE live progress (still polling +
+  `<meta refresh>`) and cooperative cancellation.
 
 ### 11. Retry + raw/repaired response viewing (Part A8)
 - Retry only failed/`needs_review` PDFs, optionally scoped to a selection.
@@ -156,8 +172,10 @@ part of the MVP, not a later addition.
   locally.
 
 ### 19. App-level settings page (Part A6)
-- Timeouts, default parallelism/delay, reasoning effort, service tier, upload size
-  cap — made configurable instead of hardcoded defaults.
+- **The page itself exists now** (step 9) — API key only. Still to add here:
+  request timeout, reasoning effort, service tier (currently hardcoded to
+  `"flex"` in `gemini.py`), upload size cap — made configurable instead of
+  hardcoded defaults.
 
 ### 20. Packaging: Pixi installer, install scripts, vendored frontend (Architecture)
 - Needed only to hand this to someone else or install it outside your dev

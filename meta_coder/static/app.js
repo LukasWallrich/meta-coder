@@ -1,6 +1,8 @@
 // Dropzone behavior for file inputs. Progressive enhancement: each dropzone is a
 // <label> wrapping a real <input type="file">, so click-to-browse works with no JS
-// at all — this script only adds drag-and-drop and the chosen-filename preview.
+// at all. Choosing or dropping a file submits the zone's form immediately — no
+// separate upload button — via requestSubmit() so any onsubmit confirm() dialog
+// and native required-field validation still run (unlike the older .submit()).
 (function () {
   function updateLabel(input, zone) {
     var preview = zone.querySelector("[data-dropzone-filename]");
@@ -15,13 +17,20 @@
     }
   }
 
+  function filesChosen(input, zone) {
+    updateLabel(input, zone);
+    if (!input.files || !input.files.length) return;
+    var form = zone.closest("form");
+    if (form) form.requestSubmit();
+  }
+
   document.querySelectorAll("[data-dropzone]").forEach(function (zone) {
     var input = zone.querySelector('input[type="file"]');
     if (!input) return;
 
     updateLabel(input, zone);
     input.addEventListener("change", function () {
-      updateLabel(input, zone);
+      filesChosen(input, zone);
     });
 
     ["dragenter", "dragover"].forEach(function (evt) {
@@ -44,7 +53,7 @@
       var files = e.dataTransfer && e.dataTransfer.files;
       if (files && files.length) {
         input.files = files;
-        updateLabel(input, zone);
+        filesChosen(input, zone);
       }
     });
   });
@@ -115,10 +124,23 @@
     listEl.appendChild(row);
   }
 
-  function renderEffectField(field) {
+  // `openByDefault` is true only for a field just added this session — a manual
+  // with dozens of fields (a real coding manual easily has 30+) should load with
+  // every field collapsed, not one huge scroll of open blocks.
+  function renderEffectField(field, openByDefault) {
     field.levels = field.levels || [];
     var block = cloneTemplate("tmpl-effect-field");
+    if (openByDefault) block.open = true;
+
+    var summaryName = block.querySelector("[data-summary-name]");
+    var summaryType = block.querySelector("[data-summary-type]");
+    function syncSummary() {
+      summaryName.textContent = field.name || "Untitled field";
+      summaryType.textContent = field.type || "string";
+    }
+
     bindText(block, "name", field);
+    block.querySelector('[data-field="name"]').addEventListener("input", syncSummary);
     bindText(block, "description", field);
     bindCheckbox(block, "required", field, false);
     bindCheckbox(block, "evidence_required", field, true);
@@ -142,12 +164,14 @@
     typeSelect.addEventListener("change", function () {
       field.type = typeSelect.value;
       refreshLevelsVisibility();
+      syncSummary();
     });
 
     field.levels.forEach(function (level) {
       renderLevel(field, level, levelsList);
     });
     refreshLevelsVisibility();
+    syncSummary();
 
     block.querySelector("[data-add-level]").addEventListener("click", function () {
       var level = { value: "", description: "" };
@@ -155,7 +179,8 @@
       renderLevel(field, level, levelsList);
     });
 
-    block.querySelector("[data-remove-row]").addEventListener("click", function () {
+    block.querySelector("[data-remove-row]").addEventListener("click", function (e) {
+      e.preventDefault(); // inside a <summary> — don't toggle collapse on remove
       var idx = state.effects.indexOf(field);
       if (idx >= 0) state.effects.splice(idx, 1);
       block.remove();
@@ -171,7 +196,7 @@
     codingSheetList.appendChild(renderCodingSheetField(f));
   });
   state.effects.forEach(function (f) {
-    effectsList.appendChild(renderEffectField(f));
+    effectsList.appendChild(renderEffectField(f, false));
   });
 
   document.getElementById("add-coding-sheet-field").addEventListener("click", function () {
@@ -183,7 +208,7 @@
   document.getElementById("add-effect-field").addEventListener("click", function () {
     var field = { name: "", type: "string", required: false, evidence_required: true, description: "", levels: [] };
     state.effects.push(field);
-    effectsList.appendChild(renderEffectField(field));
+    effectsList.appendChild(renderEffectField(field, true));
   });
 
   ["name", "description", "effect_definition"].forEach(function (key) {
@@ -200,6 +225,84 @@
   if (form) {
     form.addEventListener("submit", function () {
       hiddenInput.value = JSON.stringify(state);
+    });
+  }
+})();
+
+// Generic tab switching, reused for both the project page's sidebar and the
+// coding manual's Metadata/Coding sheet fields/Effect fields sub-tabs. Every
+// tab's content is already server-rendered on the page (no fetch/partial-load)
+// — this just shows one panel at a time within `root`.
+function initTabGroup(root, opts) {
+  if (!root) return;
+  var panels = root.querySelectorAll("[" + opts.panelAttr + "]");
+  var links = root.querySelectorAll("[" + opts.linkAttr + "]");
+  if (!panels.length) return;
+
+  function activate(tab) {
+    var match = null;
+    panels.forEach(function (panel) {
+      if (panel.getAttribute(opts.panelAttr) === tab) match = panel;
+    });
+    if (!match) match = panels[0];
+    tab = match.getAttribute(opts.panelAttr);
+    panels.forEach(function (panel) {
+      panel.classList.toggle("hidden", panel !== match);
+    });
+    links.forEach(function (link) {
+      link.classList.toggle(opts.activeClass, link.getAttribute(opts.linkAttr) === tab);
+    });
+    if (tab && opts.storageKey) {
+      try {
+        sessionStorage.setItem(opts.storageKey, tab);
+      } catch (e) {
+        /* private browsing / storage disabled — tab memory just won't persist */
+      }
+    }
+  }
+
+  links.forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      activate(link.getAttribute(opts.linkAttr));
+    });
+  });
+
+  // A server-forced tab (e.g. a validation error on this exact response) always
+  // wins over whatever was remembered from before.
+  var remembered = null;
+  if (opts.storageKey) {
+    try {
+      remembered = sessionStorage.getItem(opts.storageKey);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  activate(opts.forceTab || remembered || links[0] && links[0].getAttribute(opts.linkAttr));
+}
+
+(function () {
+  var tabRoot = document.getElementById("tab-root");
+  if (tabRoot) {
+    // Sidebar-level tabs survive this app's full-page-reload actions (form
+    // submits, the in-progress-run auto-refresh) without any server plumbing —
+    // remembered per project so switching projects doesn't leak the tab choice.
+    initTabGroup(tabRoot, {
+      linkAttr: "data-tab-link",
+      panelAttr: "data-tab-panel",
+      activeClass: "menu-active",
+      storageKey: "metaCoderActiveTab:" + (tabRoot.dataset.projectId || "default"),
+      forceTab: tabRoot.dataset.forceTab,
+    });
+  }
+
+  var manualSubtabs = document.getElementById("manual-subtabs");
+  if (manualSubtabs) {
+    initTabGroup(manualSubtabs, {
+      linkAttr: "data-subtab-link",
+      panelAttr: "data-subtab-panel",
+      activeClass: "tab-active",
+      storageKey: "metaCoderManualSubtab:" + (tabRoot ? tabRoot.dataset.projectId : "default"),
     });
   }
 })();
