@@ -78,3 +78,22 @@ def test_audit_yaml_is_readable_and_shows_missing_rows():
     assert parsed["effects"]["r1"]["fields"]["Condition"]["value"] == "Incompatible"
     assert parsed["effects"]["r1"]["fields"]["Condition"]["evidence"] == "p3, 'RT was slower...'"
     assert parsed["effects"]["r2"]["status"] == "not returned by the model"
+
+
+def test_collate_renders_null_as_not_reported():
+    manual = parse_coding_manual(MANUAL_YAML)
+    sheet = CodingSheet(rows=[CodingSheetRow("r1", "paper.pdf", "Exp 1", "Smith", "2020")], issues=[])
+    result = ExtractionResult(
+        source_pdf="paper.pdf",
+        status="ok",
+        coded_by_row_id={
+            "r1": {
+                "Condition": {"value": None, "evidence": "Not reported in the article."},
+                "ResponseTimeMs": {"value": None, "evidence": "Not reported in the article."},
+                "notes": {"value": None},
+            }
+        },
+    )
+    coded_rows, _ = collate_results(manual=manual, coding_sheet=sheet, results_by_pdf={"paper.pdf": result})
+    assert coded_rows[0]["Condition"] == "Not Reported"
+    assert coded_rows[0]["ResponseTimeMs"] == "Not Reported"

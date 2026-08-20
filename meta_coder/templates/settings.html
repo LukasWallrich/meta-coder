@@ -1,21 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Settings · Meta-Coder{% endblock %}
+{% block title %}Settings · MetaCoder{% endblock %}
 {% block content %}
 
 <div class="mb-4">
   <h1 class="text-2xl font-semibold">Settings</h1>
-  <p class="text-sm text-base-content/60 mt-1">Global configuration, shared across every project in this session.</p>
+  <p class="text-sm text-base-content/60 mt-1">Global configuration, persisted and shared across every project.</p>
 </div>
+
+{% if error %}
+<div class="alert alert-error mb-4"><span>{{ error }}</span></div>
+{% endif %}
 
 <div class="card bg-base-100 border border-base-300">
   <div class="card-body">
     <h2 class="card-title text-base">API keys</h2>
     <p class="text-sm text-base-content/60 -mt-1">
-      One key per provider, used across every project in this session.
+      One key per provider, used across every project. Every key is saved securely
+      in the operating system credential store; session-only keys are not accepted.
       {% if keyring_available %}
-      Check "remember" to also save it to your OS credential store so it's there next launch.
+      Saved keys remain locked after restart and can be unlocked when needed.
       {% else %}
-      Held in memory only — this system's OS credential store isn't available, so keys can't be remembered.
+      This system's credential store is currently unavailable, so API keys cannot be added.
       {% endif %}
     </p>
 
@@ -25,7 +30,9 @@
         <div class="flex items-center justify-between gap-2">
           <h3 class="font-medium text-sm">{{ provider_labels.get(provider, provider) }}</h3>
           {% if keys[provider] %}
-          <span class="badge badge-success badge-sm">Set{% if remembered[provider] %} · remembered{% endif %}</span>
+          <span class="badge badge-success badge-sm">Unlocked</span>
+          {% elif saved_keys[provider] %}
+          <span class="badge badge-warning badge-sm">Saved · locked</span>
           {% else %}
           <span class="badge badge-ghost badge-sm">Not set</span>
           {% endif %}
@@ -44,16 +51,17 @@
           <input type="hidden" name="provider" value="{{ provider }}">
           <div class="flex gap-2">
             <input type="password" name="api_key" placeholder="Paste your {{ provider_labels.get(provider, provider) }} API key"
-                   class="input input-sm flex-1 min-w-0" required>
-            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                   class="input input-sm flex-1 min-w-0" required {% if not keyring_available %}disabled{% endif %}>
+            <button type="submit" class="btn btn-primary btn-sm" {% if not keyring_available %}disabled{% endif %}>Save securely</button>
           </div>
-          {% if keyring_available %}
-          <label class="label cursor-pointer justify-start gap-1 text-xs mt-1">
-            <input type="checkbox" name="remember" class="checkbox checkbox-xs" {% if remembered[provider] %}checked{% endif %}>
-            Remember on this device
-          </label>
-          {% endif %}
         </form>
+
+        {% if not keys[provider] and saved_keys[provider] and keyring_available %}
+        <form method="post" action="/{{ token }}/settings/api-key/unlock" class="mt-2">
+          <input type="hidden" name="provider" value="{{ provider }}">
+          <button type="submit" class="btn btn-warning btn-sm">Unlock from Keychain</button>
+        </form>
+        {% endif %}
 
         {% if keys[provider] %}
         <form method="post" action="/{{ token }}/settings/api-key/clear" class="mt-1">
@@ -67,14 +75,38 @@
 
     <div class="divider my-1"></div>
 
-    <form method="post" action="/{{ token }}/settings/app" class="flex items-end gap-3 flex-wrap">
-      <div>
-        <label class="fieldset-legend text-sm">Max PDF upload size (MB)</label>
-        <input type="number" name="upload_size_cap_mb" value="{{ app_settings.upload_size_cap_mb }}"
-               min="1" max="1024" class="input input-sm w-28">
+    <h2 class="card-title text-base">Coding manual generator</h2>
+    <p class="text-sm text-base-content/60 -mt-1">
+      Used only to turn uploaded PDF/DOCX coding manuals into editor drafts. It is
+      independent of every project's coding/extraction provider and model.
+    </p>
+    <form method="post" action="/{{ token }}/settings/app" class="mt-2 space-y-3">
+      <div class="flex items-end gap-3 flex-wrap">
+        <div>
+          <label class="fieldset-legend text-sm">Provider</label>
+          <select name="manual_generator_provider" class="select select-sm w-40">
+            {% for provider in providers %}
+            <option value="{{ provider }}" {% if app_settings.manual_generator_provider == provider %}selected{% endif %}>
+              {{ provider_labels.get(provider, provider) }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="flex-1 min-w-48">
+          <label class="fieldset-legend text-sm">Model</label>
+          <input type="text" name="manual_generator_model"
+                 value="{{ app_settings.manual_generator_model }}"
+                 class="input input-sm w-full font-mono" required>
+        </div>
       </div>
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-      <p class="text-xs text-base-content/50">Applies to every project — larger PDFs are rejected on upload.</p>
+      <div class="flex items-end gap-3 flex-wrap">
+        <div>
+          <label class="fieldset-legend text-sm">Max document upload size (MB)</label>
+          <input type="number" name="upload_size_cap_mb" value="{{ app_settings.upload_size_cap_mb }}"
+                 min="1" max="1024" class="input input-sm w-28">
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save global settings</button>
+      </div>
     </form>
   </div>
 </div>

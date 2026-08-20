@@ -45,7 +45,6 @@ class Level:
 class FieldSpec:
     type: str
     description: str | None = None
-    required: bool = False
     levels: list[Level] = field(default_factory=list)
     evidence_required: bool = True
 
@@ -58,7 +57,6 @@ def _notes_field_spec() -> FieldSpec:
     return FieldSpec(
         type="string",
         description=NOTES_FIELD_DESCRIPTION,
-        required=True,
         levels=[],
         evidence_required=False,
     )
@@ -123,8 +121,10 @@ def _parse_field(name: str, raw: object, section: str) -> FieldSpec:
             f"{section}.{name}.type `{field_type}` is not supported "
             f"(use one of: {', '.join(sorted(SUPPORTED_TYPES))})."
         )
-    required = raw.get("required", False)
-    if not isinstance(required, bool):
+    # `required` was configurable in older manuals. Keep accepting it so those
+    # manuals import cleanly, but field inclusion is now unconditional.
+    legacy_required = raw.get("required", False)
+    if not isinstance(legacy_required, bool):
         raise ManualError(f"{section}.{name}.required must be true or false.")
     evidence_required = raw.get("evidence_required", True)
     if not isinstance(evidence_required, bool):
@@ -136,7 +136,6 @@ def _parse_field(name: str, raw: object, section: str) -> FieldSpec:
     return FieldSpec(
         type=field_type,
         description=str(description).strip() if description else None,
-        required=required,
         levels=levels,
         evidence_required=evidence_required,
     )
@@ -262,7 +261,6 @@ def _field_to_payload(name: str, spec: FieldSpec) -> dict[str, Any]:
         "name": name,
         "type": spec.type,
         "description": spec.description or "",
-        "required": spec.required,
         "evidence_required": spec.evidence_required,
         "levels": [{"value": level.value, "description": level.description or ""} for level in spec.levels],
     }
@@ -285,8 +283,6 @@ def manual_to_yaml_text(manual: CodingManual) -> str:
         out: dict[str, Any] = {"type": spec.type}
         if spec.description:
             out["description"] = spec.description
-        if spec.required:
-            out["required"] = True
         if not spec.evidence_required:
             out["evidence_required"] = False
         if spec.levels:

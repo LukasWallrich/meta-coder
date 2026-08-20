@@ -32,12 +32,52 @@ def _safe_stem(source_pdf: str) -> str:
     return _SAFE_STEM_RE.sub("_", Path(source_pdf).stem)
 
 
-def _raw_json_path(project: Project, source_pdf: str) -> Path:
+def raw_json_path(project: Project, source_pdf: str) -> Path:
     return project.raw_dir / f"{_safe_stem(source_pdf)}.json"
 
 
 def audit_yaml_path(project: Project, source_pdf: str) -> Path:
     return project.audit_dir / f"{_safe_stem(source_pdf)}.yaml"
+
+
+def _result_from_raw_json(path: Path) -> ExtractionResult | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not data.get("source_pdf"):
+        return None
+    return ExtractionResult(
+        source_pdf=data["source_pdf"],
+        status=data.get("status") or "error",
+        coded_by_row_id=data.get("coded_by_row_id") or {},
+        missing_ids=set(data.get("missing_ids") or []),
+        extra_ids=set(data.get("extra_ids") or []),
+        raw_response=data.get("raw_response"),
+        repaired_response=data.get("repaired_response"),
+        error=data.get("error"),
+        duration_sec=data.get("duration_sec") or 0.0,
+        input_tokens=data.get("input_tokens"),
+        output_tokens=data.get("output_tokens"),
+    )
+
+
+def _load_existing_results(project: Project) -> dict[str, ExtractionResult]:
+    """Rehydrate prior attempts from `output/raw/*.json` so a partial run (a
+    retry of just a few PDFs, or a cancelled run resumed later) doesn't
+    overwrite `coded_data.csv`/`evidence.csv` with blank rows for every PDF
+    this particular run didn't touch. Keyed off the `source_pdf` field stored
+    *inside* each file, not the filename — `_safe_stem` is lossy, so two
+    different source filenames can collide on the same stem."""
+
+    results: dict[str, ExtractionResult] = {}
+    if not project.raw_dir.is_dir():
+        return results
+    for path in project.raw_dir.glob("*.json"):
+        result = _result_from_raw_json(path)
+        if result is not None:
+            results[result.source_pdf] = result
+    return results
 
 
 class _RequestPacer:
@@ -49,39 +89,43 @@ class _RequestPacer:
         self._last_started: float | None = None
         self._lock = threading.Lock()
 
-    def wait(self) -> None:
+    def wait(self, cancel_event: threading.Event | None = None) -> bool:
         if self.delay_sec <= 0:
-            return
+            return not (cancel_event and cancel_event.is_set())
         while True:
             with self._lock:
                 now = time.monotonic()
                 remaining = 0.0 if self._last_started is None else self.delay_sec - (now - self._last_started)
                 if remaining <= 0:
                     self._last_started = now
-                    return
-            time.sleep(min(remaining, 0.1))
+                    return True
+            if cancel_event and cancel_event.wait(min(remaining, 0.1)):
+                return False
 
 
 @dataclass
 class PdfProgress:
     source_pdf: str
-    status: str = "pending"  # pending | running | ok | needs_review | error
+    status: str = "pending"  # pending | running | ok | needs_review | error | cancelled
     error: str | None = None
     missing_ids: list[str] = field(default_factory=list)
     extra_ids: list[str] = field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
+    json_repaired: bool = False
 
 
 @dataclass
 class RunState:
-    status: str = "idle"  # idle | running | complete | failed
+    status: str = "idle"  # idle | running | cancelling | complete | failed | cancelled
     total: int = 0
     processed: int = 0
     pdfs: list[PdfProgress] = field(default_factory=list)
     error: str | None = None
     started_at: float | None = None
     finished_at: float | None = None
+    cancel_requested: bool = False
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -98,6 +142,7 @@ class RunState:
                     "extra_ids": p.extra_ids,
                     "input_tokens": p.input_tokens,
                     "output_tokens": p.output_tokens,
+                    "json_repaired": p.json_repaired,
                 }
                 for p in self.pdfs
             ],
@@ -117,7 +162,18 @@ class Runner:
 
     def is_running(self, project_id: str) -> bool:
         state = self._states.get(project_id)
-        return bool(state and state.status == "running")
+        return bool(state and state.status in ("running", "cancelling"))
+
+    def cancel(self, project_id: str) -> None:
+        """Cooperative cancellation: flips a flag `process_one` checks before
+        starting each PDF. A PDF already mid-request runs to completion rather
+        than being killed — the "next safe checkpoint" plan.md A7 calls for."""
+
+        state = self._states.get(project_id)
+        if state and state.status == "running":
+            state.cancel_requested = True
+            state.cancel_event.set()
+            state.status = "cancelling"
 
     def start(
         self,
@@ -133,12 +189,26 @@ class Runner:
         request_timeout_sec: int | None = None,
         service_tier: str | None = None,
         reasoning_effort: str = "",
+        only_pdfs: list[str] | None = None,
     ) -> RunState:
+        """`only_pdfs`, when given, restricts the run to that subset of the
+        coding sheet's PDFs (todo.md step 11's retry: reprocess only
+        failed/needs_review PDFs, optionally narrowed to a selection) instead
+        of the full set every PDF the coding sheet references."""
+
         if self.is_running(project.project_id):
             raise RuntimeError("This project is already running.")
         model = model or default_model(provider)
 
-        pdf_names = sorted({row.source_pdf for row in coding_sheet.rows})
+        all_pdf_names = sorted({row.source_pdf for row in coding_sheet.rows})
+        if only_pdfs is not None:
+            wanted = set(only_pdfs)
+            pdf_names = [name for name in all_pdf_names if name in wanted]
+        else:
+            pdf_names = all_pdf_names
+        if not pdf_names:
+            raise RuntimeError("No matching PDFs to run.")
+
         state = RunState(
             status="running",
             total=len(pdf_names),
@@ -184,7 +254,11 @@ class Runner:
         service_tier: str | None,
         reasoning_effort: str,
     ) -> None:
-        results_by_pdf: dict[str, ExtractionResult] = {}
+        # Seed from prior attempts (see `_load_existing_results`) so a partial run
+        # — a retry of a few PDFs, or a run cancelled midway — upserts over the
+        # existing record instead of collating as if every other PDF was never
+        # processed.
+        results_by_pdf: dict[str, ExtractionResult] = _load_existing_results(project)
         results_lock = threading.Lock()
         pacer = _RequestPacer(request_delay_sec)
         provider_kwargs: dict[str, object] = {}
@@ -194,46 +268,66 @@ class Runner:
             provider_kwargs["reasoning_effort"] = reasoning_effort
 
         def process_one(progress: PdfProgress) -> None:
+            if state.cancel_requested:
+                with results_lock:
+                    progress.status = "cancelled"
+                    state.processed += 1
+                return
+
             progress.status = "running"
             pdf_path = project.sources_dir / progress.source_pdf
             rows = coding_sheet.rows_for_pdf(progress.source_pdf)
-            pacer.wait()
-            result = extract_pdf_effects(
-                provider=provider,
-                pdf_path=pdf_path,
-                manual=manual,
-                rows=rows,
-                api_key=api_key,
-                model=model,
-                timeout_sec=request_timeout_sec,
-                **provider_kwargs,
-            )
-            _raw_json_path(project, progress.source_pdf).write_text(
-                json.dumps(
-                    {
-                        "source_pdf": result.source_pdf,
-                        "provider": provider,
-                        "model": model,
-                        "status": result.status,
-                        "error": result.error,
-                        "coded_by_row_id": result.coded_by_row_id,
-                        "missing_ids": sorted(result.missing_ids),
-                        "extra_ids": sorted(result.extra_ids),
-                        "raw_response": result.raw_response,
-                        "duration_sec": result.duration_sec,
-                        "input_tokens": result.input_tokens,
-                        "output_tokens": result.output_tokens,
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            audit_yaml_path(project, progress.source_pdf).write_text(
-                render_pdf_audit_yaml(
-                    manual=manual, source_pdf=progress.source_pdf, rows=rows, result=result
-                ),
-                encoding="utf-8",
-            )
+            try:
+                if not pacer.wait(state.cancel_event):
+                    with results_lock:
+                        progress.status = "cancelled"
+                        state.processed += 1
+                    return
+                result = extract_pdf_effects(
+                    provider=provider,
+                    pdf_path=pdf_path,
+                    manual=manual,
+                    rows=rows,
+                    api_key=api_key,
+                    model=model,
+                    timeout_sec=request_timeout_sec,
+                    **provider_kwargs,
+                    cancel_event=state.cancel_event,
+                )
+                raw_json_path(project, progress.source_pdf).write_text(
+                    json.dumps(
+                        {
+                            "source_pdf": result.source_pdf,
+                            "provider": provider,
+                            "model": model,
+                            "status": result.status,
+                            "error": result.error,
+                            "coded_by_row_id": result.coded_by_row_id,
+                            "missing_ids": sorted(result.missing_ids),
+                            "extra_ids": sorted(result.extra_ids),
+                            "raw_response": result.raw_response,
+                            "repaired_response": result.repaired_response,
+                            "duration_sec": result.duration_sec,
+                            "input_tokens": result.input_tokens,
+                            "output_tokens": result.output_tokens,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                audit_yaml_path(project, progress.source_pdf).write_text(
+                    render_pdf_audit_yaml(
+                        manual=manual, source_pdf=progress.source_pdf, rows=rows, result=result
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception as exc:  # noqa: BLE001 - one PDF's failure (e.g. a
+                # disk write error) must not abort the whole run and lose every
+                # other already-completed PDF's results — see collate below.
+                result = ExtractionResult(
+                    source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {exc}"
+                )
+
             with results_lock:
                 results_by_pdf[progress.source_pdf] = result
                 progress.status = result.status
@@ -242,6 +336,7 @@ class Runner:
                 progress.extra_ids = sorted(result.extra_ids)
                 progress.input_tokens = result.input_tokens
                 progress.output_tokens = result.output_tokens
+                progress.json_repaired = result.repaired_response is not None
                 state.processed += 1
 
         try:
@@ -250,7 +345,8 @@ class Runner:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [executor.submit(process_one, progress) for progress in state.pdfs]
                 for future in futures:
-                    future.result()  # re-raises any worker exception here
+                    future.result()  # process_one never raises; this only ever
+                    # surfaces a genuine framework-level bug, not a per-PDF failure
 
             coded_rows, evidence_rows = collate_results(
                 manual=manual, coding_sheet=coding_sheet, results_by_pdf=results_by_pdf
@@ -261,7 +357,7 @@ class Runner:
             (project.output_dir / "evidence.csv").write_text(
                 rows_to_csv(evidence_rows, manual), encoding="utf-8"
             )
-            state.status = "complete"
+            state.status = "cancelled" if state.cancel_requested else "complete"
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             state.status = "failed"
             state.error = str(exc)

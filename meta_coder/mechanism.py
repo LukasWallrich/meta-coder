@@ -42,8 +42,14 @@ DIALECTS = {"gemini": GEMINI_TYPE, "json_schema": JSON_SCHEMA_TYPE}
 
 def _value_schema(spec: FieldSpec, type_map: dict[str, str]) -> dict[str, Any]:
     schema: dict[str, Any] = {"type": type_map[spec.type]}
+    if type_map is JSON_SCHEMA_TYPE:
+        schema["type"] = [type_map[spec.type], "null"]
+    else:
+        schema["nullable"] = True
     if spec.levels:
         schema["enum"] = [level.value for level in spec.levels]
+        if type_map is JSON_SCHEMA_TYPE:
+            schema["enum"].append(None)
     return schema
 
 
@@ -56,12 +62,15 @@ def _coded_field_schema(name: str, spec: FieldSpec, type_map: dict[str, str]) ->
             "description": "Page number and/or short quotation supporting this value.",
         }
         required.append("evidence")
-    return {
+    schema = {
         "type": type_map["object"],
         "description": spec.description or f"Coded value for `{name}`.",
         "properties": properties,
         "required": required,
     }
+    if type_map is JSON_SCHEMA_TYPE:
+        schema["additionalProperties"] = False
+    return schema
 
 
 def build_response_schema(manual: CodingManual, *, dialect: str = "gemini") -> dict[str, Any]:
@@ -71,12 +80,10 @@ def build_response_schema(manual: CodingManual, *, dialect: str = "gemini") -> d
     location) are deliberately excluded — they are never requested of the model
     and are rejoined from the coding sheet at collation time.
 
-    `required` only ever lists the fields actually marked required in the
-    manual — never every property (which OpenAI/OpenRouter's `strict: true`
-    json_schema mode demands, forcing optional fields to be modeled as
-    nullable instead of absent). Provider adapters using this in "json_schema"
-    dialect must NOT set `strict: true`, or a manual with any optional effect
-    field will be rejected by the provider.
+    Every manual field is required in each row. `value: null` means the article
+    does not report that value; omitting the field is never valid. The JSON
+    Schema dialect is closed (`additionalProperties: false`) so OpenRouter can
+    enforce it with strict structured output.
     """
 
     if dialect not in DIALECTS:
@@ -98,24 +105,28 @@ def build_response_schema(manual: CodingManual, *, dialect: str = "gemini") -> d
     required = ["row_id"]
     for name, spec in manual.effects.items():
         effect_properties[name] = _coded_field_schema(name, spec, type_map)
-        if spec.required:
-            required.append(name)
+        required.append(name)
 
-    return {
+    item_schema: dict[str, Any] = {
+        "type": type_map["object"],
+        "properties": effect_properties,
+        "required": required,
+    }
+    schema: dict[str, Any] = {
         "type": type_map["object"],
         "properties": {
             "effects": {
                 "type": type_map["array"],
                 "description": "One entry per requested coding-sheet row.",
-                "items": {
-                    "type": type_map["object"],
-                    "properties": effect_properties,
-                    "required": required,
-                },
+                "items": item_schema,
             }
         },
         "required": ["effects"],
     }
+    if type_map is JSON_SCHEMA_TYPE:
+        item_schema["additionalProperties"] = False
+        schema["additionalProperties"] = False
+    return schema
 
 
 @dataclass
@@ -131,13 +142,30 @@ class ValidationResult:
         return not self.ok
 
 
-def validate_response(parsed: object, requested_row_ids: set[str]) -> ValidationResult:
+def _valid_field_value(value: object, spec: FieldSpec) -> bool:
+    if value is None:
+        return True
+    if spec.type == "string":
+        return isinstance(value, str) and (not spec.levels or value in {level.value for level in spec.levels})
+    if spec.type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if spec.type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, bool)
+
+
+def validate_response(
+    parsed: object,
+    requested_row_ids: set[str],
+    expected_fields: dict[str, FieldSpec] | set[str] | None = None,
+) -> ValidationResult:
     """Hard-validate a parsed response against the coding-sheet rows that were
     requested for one PDF.
 
     Deliberately does NOT trust positional alignment: the returned row_id set must
     equal the requested set exactly, or the whole PDF is flagged needs_review. A
-    mismatch is never partially accepted — see plan.md "Problem 2" for why.
+    mismatch is never partially accepted. When `expected_fields` is supplied,
+    every returned row must also include every manual field.
     """
 
     if not isinstance(parsed, dict):
@@ -158,6 +186,61 @@ def validate_response(parsed: object, requested_row_ids: set[str]) -> Validation
             return ValidationResult(ok=False, error=f"Duplicate row_id in response: `{row_id}`.")
         returned_ids.add(row_id)
         coded_by_row_id[row_id] = {k: v for k, v in item.items() if k != "row_id"}
+
+    if expected_fields:
+        expected_names = set(expected_fields)
+        incomplete = {
+            row_id: expected_names - set(fields)
+            for row_id, fields in coded_by_row_id.items()
+            if expected_names - set(fields)
+        }
+        if incomplete:
+            details = "; ".join(
+                f"`{row_id}`: {', '.join(sorted(fields))}" for row_id, fields in incomplete.items()
+            )
+            return ValidationResult(
+                ok=False,
+                coded_by_row_id=coded_by_row_id,
+                error=f"Response omitted required field(s): {details}.",
+            )
+        malformed = {
+            row_id: sorted(name for name in expected_names if not isinstance(fields[name], dict))
+            for row_id, fields in coded_by_row_id.items()
+        }
+        malformed = {row_id: names for row_id, names in malformed.items() if names}
+        if malformed:
+            details = "; ".join(
+                f"`{row_id}`: {', '.join(names)}" for row_id, names in malformed.items()
+            )
+            return ValidationResult(
+                ok=False,
+                coded_by_row_id=coded_by_row_id,
+                error=f"Response returned malformed field value(s): {details}.",
+            )
+        invalid = {}
+        for row_id, fields in coded_by_row_id.items():
+            names = []
+            for name in expected_names:
+                field = fields[name]
+                if "value" not in field or (
+                    isinstance(expected_fields, dict)
+                    and not _valid_field_value(field["value"], expected_fields[name])
+                ):
+                    names.append(name)
+                elif isinstance(expected_fields, dict) and expected_fields[name].evidence_required:
+                    if not isinstance(field.get("evidence"), str) or not field["evidence"].strip():
+                        names.append(name)
+            if names:
+                invalid[row_id] = sorted(names)
+        if invalid:
+            details = "; ".join(
+                f"`{row_id}`: {', '.join(names)}" for row_id, names in invalid.items()
+            )
+            return ValidationResult(
+                ok=False,
+                coded_by_row_id=coded_by_row_id,
+                error=f"Response returned invalid field value(s): {details}.",
+            )
 
     if returned_ids != requested_row_ids:
         return ValidationResult(

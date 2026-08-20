@@ -10,6 +10,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     "PyYAML>=6.0",
     "keyring>=24.0",
+    "json-repair>=0.30",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -27,3 +30,31 @@ include = ["meta_coder*"]
 
 [tool.setuptools.package-data]
 meta_coder = ["templates/*.html", "static/*", "config/*.yml"]
+
+# todo.md step 20: locked-environment packaging so end users don't install
+# Python/dependencies separately. `pixi install` materializes a `.pixi/` env
+# from `pixi.lock` (committed); `pixi run start` launches the app through it.
+# One manifest (this file) rather than a parallel pixi.toml, since the two
+# would otherwise duplicate the same dependency list.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64", "win-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.10,<3.13"
+
+[tool.pixi.pypi-dependencies]
+meta-coder = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+start = "python -m meta_coder"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.feature.dev.pypi-dependencies]
+pytest = ">=8.0"
+
+[tool.pixi.feature.dev.tasks]
+test = "pytest"

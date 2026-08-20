@@ -33,10 +33,19 @@ def test_manual_to_editor_payload_is_json_safe_round_trip():
     round_tripped = json.loads(json.dumps(payload))
     rebuilt = manual_from_editor_payload(round_tripped)
 
+    assert "required" not in payload["effects"][0]
     assert rebuilt.effect_definition == manual.effect_definition
     assert set(rebuilt.effects) == {"Condition", "ResponseTimeMs", "notes"}
     assert [level.value for level in rebuilt.effects["Condition"].levels] == ["No", "Yes"]
     assert rebuilt.effects["ResponseTimeMs"].evidence_required is False
+
+
+def test_legacy_required_flag_imports_but_is_not_saved():
+    manual = parse_coding_manual(MANUAL_YAML)
+    import yaml
+
+    saved = yaml.safe_load(manual_to_yaml_text(manual))
+    assert "required" not in saved["effects"]["Condition"]
 
 
 def test_manual_from_editor_payload_rejects_duplicate_field_names():
@@ -54,10 +63,9 @@ def test_manual_from_editor_payload_rejects_duplicate_field_names():
         assert "duplicate" in str(exc).lower()
 
 
-def test_notes_field_is_always_added_and_required():
+def test_notes_field_is_always_added():
     manual = parse_coding_manual(MANUAL_YAML)
     notes = manual.effects[NOTES_FIELD_NAME]
-    assert notes.required is True
     assert notes.evidence_required is False
 
 
@@ -75,7 +83,6 @@ def test_notes_field_cannot_be_redefined_or_removed():
     manual = manual_from_editor_payload(payload)
     notes = manual.effects[NOTES_FIELD_NAME]
     assert notes.type == "string"
-    assert notes.required is True
     assert notes.evidence_required is False
 
     # Omitting it entirely still results in it being present.

@@ -1,8 +1,7 @@
-"""App-level settings (todo.md step 19) — global, not per-project: request
-timeout/reasoning effort/service tier are per-project (settings.py, since a
-project's own extraction workload is what they tune); upload size cap applies
-to every project uniformly, so it lives here instead, persisted under
-`app_data_dir()` alongside the projects themselves.
+"""Settings shared across every project.
+
+Extraction settings remain per-project, while the upload cap and coding-manual
+generator provider/model are global because they describe app-wide workflows.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .paths import app_data_dir
+from .providers import DEFAULT_PROVIDER, PROVIDERS, default_model
 
 
 MIN_UPLOAD_SIZE_CAP_MB = 1
@@ -22,12 +22,22 @@ DEFAULT_UPLOAD_SIZE_CAP_MB = 128
 @dataclass
 class AppSettings:
     upload_size_cap_mb: int = DEFAULT_UPLOAD_SIZE_CAP_MB
+    manual_generator_provider: str = DEFAULT_PROVIDER
+    manual_generator_model: str = ""
 
     def clamped(self) -> "AppSettings":
+        provider = (
+            self.manual_generator_provider
+            if self.manual_generator_provider in PROVIDERS
+            else DEFAULT_PROVIDER
+        )
         return AppSettings(
             upload_size_cap_mb=max(
                 MIN_UPLOAD_SIZE_CAP_MB, min(int(self.upload_size_cap_mb), MAX_UPLOAD_SIZE_CAP_MB)
-            )
+            ),
+            manual_generator_provider=provider,
+            manual_generator_model=(self.manual_generator_model or "").strip()
+            or default_model(provider),
         )
 
     @property
@@ -48,7 +58,11 @@ def load_app_settings() -> AppSettings:
         if not isinstance(raw, dict):
             return AppSettings().clamped()
         return AppSettings(
-            upload_size_cap_mb=int(raw.get("upload_size_cap_mb") or DEFAULT_UPLOAD_SIZE_CAP_MB)
+            upload_size_cap_mb=int(raw.get("upload_size_cap_mb") or DEFAULT_UPLOAD_SIZE_CAP_MB),
+            manual_generator_provider=str(
+                raw.get("manual_generator_provider") or DEFAULT_PROVIDER
+            ),
+            manual_generator_model=str(raw.get("manual_generator_model") or ""),
         ).clamped()
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return AppSettings().clamped()

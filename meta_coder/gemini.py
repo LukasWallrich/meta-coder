@@ -12,12 +12,20 @@ import base64
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheetRow
-from .extraction import ExtractionResult, ProviderError
+from .extraction import (
+    ExtractionCancelled,
+    ExtractionResult,
+    ProviderError,
+    cancellable_urlopen,
+    parse_json_response,
+)
+import threading
 from .manual import CodingManual
 from .mechanism import ValidationResult, build_response_schema, validate_response
 
@@ -32,8 +40,8 @@ BASELINE_RULES = """You are a research assistant coding effects for a meta-analy
 Rules:
 1. Only use information present in the article. No outside knowledge, no inference
    or best-guessing, unless a field's description explicitly says otherwise.
-2. If the article does not report a value for a field, set "value" to "Not Reported"
-   and say so in "evidence" rather than guessing.
+2. If the article does not report a value for a field, set "value" to null and
+   say "Not reported" in "evidence" rather than guessing. A missing field is invalid.
 3. Code values must follow the exact formatting the field description specifies
    (units, decimal places, category label text).
 4. "evidence" must be concise but specific: include a page number and/or a short
@@ -60,30 +68,44 @@ def _redact(text: str, api_key: str) -> str:
     return text.replace(api_key, "[redacted]") if api_key else text
 
 
-def _call_gemini(
+def check_model(model: str, *, api_key: str, timeout_sec: int = 20) -> list[str]:
+    """Confirm a Gemini model exists and accepts generateContent before saving it."""
+
+    if not api_key:
+        return ["Set or unlock a Gemini API key before validating a model."]
+    name = model.strip()
+    if not name:
+        return ["Enter a Gemini model name."]
+    url = f"{API_BASE}/models/{urllib.parse.quote(name, safe='-_.')}?key={urllib.parse.quote(api_key, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_sec) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return [f"Gemini could not validate `{name}` ({exc.code})."]
+    except urllib.error.URLError as exc:
+        return [f"Could not reach Gemini to validate the model: {_redact(str(exc.reason), api_key)}"]
+    methods = {str(method).lower() for method in body.get("supportedGenerationMethods") or []}
+    if methods and "generatecontent" not in methods:
+        return [f"Gemini model `{name}` does not support generateContent."]
+    return []
+
+
+def _call_gemini_parts(
     *,
     model: str,
     api_key: str,
-    prompt: str,
-    pdf_bytes: bytes,
+    parts: list[dict[str, Any]],
     response_schema: dict[str, Any],
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     service_tier: str = DEFAULT_SERVICE_TIER,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, int | None]]:
     url = f"{API_BASE}/models/{model}:generateContent?key={api_key}"
     payload = {
         "contents": [
             {
                 "role": "user",
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "application/pdf",
-                            "data": base64.b64encode(pdf_bytes).decode("ascii"),
-                        }
-                    },
-                ],
+                "parts": parts,
             }
         ],
         "generationConfig": {
@@ -103,12 +125,16 @@ def _call_gemini(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        raw_body = cancellable_urlopen(
+            request, timeout=timeout_sec, cancel_event=cancel_event or threading.Event()
+        )
+        body = json.loads(raw_body.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = _redact(exc.read().decode("utf-8", errors="replace"), api_key)
         raise ProviderError(f"Gemini API error ({exc.code}): {detail}") from exc
     except urllib.error.URLError as exc:
+        if cancel_event and cancel_event.is_set():
+            raise ExtractionCancelled("Extraction cancelled by user.") from exc
         raise ProviderError(f"Could not reach Gemini: {_redact(str(exc.reason), api_key)}") from exc
 
     candidates = body.get("candidates") or []
@@ -130,6 +156,60 @@ def _call_gemini(
     return text, tokens
 
 
+def _call_gemini(
+    *,
+    model: str,
+    api_key: str,
+    prompt: str,
+    pdf_bytes: bytes,
+    response_schema: dict[str, Any],
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    service_tier: str = DEFAULT_SERVICE_TIER,
+    cancel_event: threading.Event | None = None,
+) -> tuple[str, dict[str, int | None]]:
+    """Structured generation with a native PDF, kept as the extraction seam."""
+
+    return _call_gemini_parts(
+        model=model,
+        api_key=api_key,
+        parts=[
+            {"text": prompt},
+            {
+                "inline_data": {
+                    "mime_type": "application/pdf",
+                    "data": base64.b64encode(pdf_bytes).decode("ascii"),
+                }
+            },
+        ],
+        response_schema=response_schema,
+        timeout_sec=timeout_sec,
+        service_tier=service_tier,
+        cancel_event=cancel_event,
+    )
+
+
+def generate_structured_text(
+    *,
+    prompt: str,
+    response_schema: dict[str, Any],
+    api_key: str,
+    model: str = DEFAULT_MODEL,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    service_tier: str = DEFAULT_SERVICE_TIER,
+) -> str:
+    """Generate schema-constrained JSON from text-only input."""
+
+    text, _tokens = _call_gemini_parts(
+        model=model,
+        api_key=api_key,
+        parts=[{"text": prompt}],
+        response_schema=response_schema,
+        timeout_sec=timeout_sec,
+        service_tier=service_tier,
+    )
+    return text
+
+
 def extract_pdf_effects(
     *,
     pdf_path: Path,
@@ -139,6 +219,7 @@ def extract_pdf_effects(
     model: str = DEFAULT_MODEL,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     service_tier: str = DEFAULT_SERVICE_TIER,
+    cancel_event: threading.Event | None = None,
 ) -> ExtractionResult:
     source_pdf = pdf_path.name
     requested_ids = {row.row_id for row in rows}
@@ -155,28 +236,29 @@ def extract_pdf_effects(
             response_schema=response_schema,
             timeout_sec=timeout_sec,
             service_tier=service_tier,
+            cancel_event=cancel_event,
         )
     except ProviderError as exc:
         return ExtractionResult(
             source_pdf=source_pdf,
-            status="error",
+            status="cancelled" if isinstance(exc, ExtractionCancelled) else "error",
             error=str(exc),
             raw_response=exc.raw_response,
             duration_sec=time.monotonic() - started,
         )
 
     try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
+        parsed, repaired_response = parse_json_response(raw_text)
+    except ProviderError as exc:
         return ExtractionResult(
             source_pdf=source_pdf,
             status="error",
-            error=f"Gemini returned invalid JSON: {exc}",
+            error=str(exc),
             raw_response=raw_text,
             duration_sec=time.monotonic() - started,
         )
 
-    result: ValidationResult = validate_response(parsed, requested_ids)
+    result: ValidationResult = validate_response(parsed, requested_ids, manual.effects)
     duration = time.monotonic() - started
     if not result.ok:
         return ExtractionResult(
@@ -187,6 +269,7 @@ def extract_pdf_effects(
             extra_ids=result.extra_ids,
             error=result.error,
             raw_response=raw_text,
+            repaired_response=repaired_response,
             duration_sec=duration,
             input_tokens=tokens.get("input_tokens"),
             output_tokens=tokens.get("output_tokens"),
@@ -197,6 +280,7 @@ def extract_pdf_effects(
         status="ok",
         coded_by_row_id=result.coded_by_row_id,
         raw_response=raw_text,
+        repaired_response=repaired_response,
         duration_sec=duration,
         input_tokens=tokens.get("input_tokens"),
         output_tokens=tokens.get("output_tokens"),

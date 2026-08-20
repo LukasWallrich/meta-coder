@@ -4,10 +4,9 @@ to Gemini's, routing through whatever underlying model the user names.
 Uses the OpenAI-compatible chat completions shape OpenRouter exposes: PDFs go in
 as a `file` content part (base64 data URL), and structured output is requested via
 `response_format: {type: "json_schema", ...}` — see `mechanism.build_response_schema`
-called with `dialect="json_schema"`. Deliberately does NOT set `strict: true`: our
-manuals allow optional effect fields (not every property required), which OpenAI's
-strict json_schema mode forbids without modeling every optional field as nullable
-instead of absent — simpler and more faithful to just not claim strict conformance.
+called with `dialect="json_schema"` and `strict: true`. Every manual field is
+required in each returned row; `value: null` explicitly means the paper did not
+report it, rather than letting a provider silently omit the field.
 
 Unlike Gemini's adapter, this one retries transient failures (connection errors,
 429, 5xx) with bounded exponential backoff — OpenRouter fans a single request out
@@ -26,7 +25,14 @@ from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheetRow
-from .extraction import ExtractionResult, ProviderError
+from .extraction import (
+    ExtractionCancelled,
+    ExtractionResult,
+    ProviderError,
+    cancellable_urlopen,
+    parse_json_response,
+)
+import threading
 from .manual import CodingManual
 from .mechanism import ValidationResult, build_response_schema, validate_response
 
@@ -47,8 +53,8 @@ BASELINE_RULES = """You are a research assistant coding effects for a meta-analy
 Rules:
 1. Only use information present in the article. No outside knowledge, no inference
    or best-guessing, unless a field's description explicitly says otherwise.
-2. If the article does not report a value for a field, set "value" to "Not Reported"
-   and say so in "evidence" rather than guessing.
+2. If the article does not report a value for a field, set "value" to null and
+   say "Not reported" in "evidence" rather than guessing. A missing field is invalid.
 3. Code values must follow the exact formatting the field description specifies
    (units, decimal places, category label text).
 4. "evidence" must be concise but specific: include a page number and/or a short
@@ -123,45 +129,34 @@ def check_model(model: str, *, api_key: str = "", timeout_sec: int = 20) -> list
     modalities = set((entry.get("architecture") or {}).get("input_modalities") or [])
     if "file" not in modalities:
         problems.append(
-            "This model has no native file/PDF input — OpenRouter will OCR-convert the PDF "
-            "to text first (extra cost, and any information conveyed only visually — figures, "
-            "tables with unusual layouts — may be lost)."
+            "This model has no native file/PDF input — OpenRouter will use its free "
+            "Cloudflare AI parser to convert the PDF to text/Markdown. Information conveyed "
+            "only visually — figures or unusually laid-out tables — may be lost."
         )
     return problems
 
 
-def _call_openrouter(
+def _call_openrouter_content(
     *,
     model: str,
     api_key: str,
-    prompt: str,
-    pdf_bytes: bytes,
-    filename: str,
+    content: list[dict[str, Any]],
     response_schema: dict[str, Any],
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     reasoning_effort: str = "",
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, int | None]]:
     payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "file",
-                        "file": {
-                            "filename": filename,
-                            "file_data": "data:application/pdf;base64,"
-                            + base64.b64encode(pdf_bytes).decode("ascii"),
-                        },
-                    },
-                ],
+                "content": content,
             }
         ],
         "response_format": {
             "type": "json_schema",
-            "json_schema": {"name": "meta_coder_effects", "schema": response_schema},
+            "json_schema": {"name": "meta_coder_effects", "strict": True, "schema": response_schema},
         },
         "temperature": 0,
     }
@@ -174,36 +169,110 @@ def _call_openrouter(
             f"{API_BASE}/chat/completions", api_key=api_key, body=payload, method="POST"
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_sec) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            raw_body = cancellable_urlopen(
+                request, timeout=timeout_sec, cancel_event=cancel_event or threading.Event()
+            )
+            body = json.loads(raw_body.decode("utf-8"))
             break
         except urllib.error.HTTPError as exc:
+            if cancel_event and cancel_event.is_set():
+                raise ExtractionCancelled("Extraction cancelled by user.") from exc
             detail = _redact(exc.read().decode("utf-8", errors="replace"), api_key)
             last_error = ProviderError(f"OpenRouter API error ({exc.code}): {detail}")
             if exc.code not in RETRYABLE_STATUS or attempt == MAX_RETRIES:
                 raise last_error from exc
         except urllib.error.URLError as exc:
+            if cancel_event and cancel_event.is_set():
+                raise ExtractionCancelled("Extraction cancelled by user.") from exc
             last_error = ProviderError(f"Could not reach OpenRouter: {_redact(str(exc.reason), api_key)}")
-            if attempt == MAX_RETRIES:
+            if attempt == MAX_RETRIES or (cancel_event and cancel_event.is_set()):
                 raise last_error from exc
-        time.sleep(RETRY_BACKOFF_BASE_SEC * (2 ** (attempt - 1)))
+        if cancel_event and cancel_event.wait(RETRY_BACKOFF_BASE_SEC * (2 ** (attempt - 1))):
+            raise ExtractionCancelled("Extraction cancelled by user.")
     else:  # pragma: no cover - loop always breaks or raises above
         raise last_error or ProviderError("OpenRouter request failed for an unknown reason.")
 
+    raw_response = json.dumps(body)
+    if not isinstance(body, dict):
+        raise ProviderError("OpenRouter returned an invalid response object.", raw_response=raw_response)
     choices = body.get("choices") or []
-    if not choices:
-        raise ProviderError("OpenRouter returned no choices.", raw_response=json.dumps(body))
-    message = choices[0].get("message") or {}
+    if not isinstance(choices, list) or not choices:
+        raise ProviderError("OpenRouter returned no choices.", raw_response=raw_response)
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise ProviderError("OpenRouter returned an invalid choice.", raw_response=raw_response)
+    message = choice.get("message") or {}
+    if not isinstance(message, dict):
+        raise ProviderError("OpenRouter returned an invalid message.", raw_response=raw_response)
     text = message.get("content")
     if not isinstance(text, str) or not text.strip():
-        raise ProviderError("OpenRouter returned no message content.", raw_response=json.dumps(body))
+        raise ProviderError("OpenRouter returned no message content.", raw_response=raw_response)
 
     usage = body.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
     tokens = {
         "input_tokens": usage.get("prompt_tokens"),
         "output_tokens": usage.get("completion_tokens"),
     }
     return text, tokens
+
+
+def _call_openrouter(
+    *,
+    model: str,
+    api_key: str,
+    prompt: str,
+    pdf_bytes: bytes,
+    filename: str,
+    response_schema: dict[str, Any],
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    reasoning_effort: str = "",
+    cancel_event: threading.Event | None = None,
+) -> tuple[str, dict[str, int | None]]:
+    """Structured generation with a PDF file part, kept as the extraction seam."""
+
+    return _call_openrouter_content(
+        model=model,
+        api_key=api_key,
+        content=[
+            {"type": "text", "text": prompt},
+            {
+                "type": "file",
+                "file": {
+                    "filename": filename,
+                    "file_data": "data:application/pdf;base64,"
+                    + base64.b64encode(pdf_bytes).decode("ascii"),
+                },
+            },
+        ],
+        response_schema=response_schema,
+        timeout_sec=timeout_sec,
+        reasoning_effort=reasoning_effort,
+        cancel_event=cancel_event,
+    )
+
+
+def generate_structured_text(
+    *,
+    prompt: str,
+    response_schema: dict[str, Any],
+    api_key: str,
+    model: str = DEFAULT_MODEL,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    reasoning_effort: str = "",
+) -> str:
+    """Generate schema-constrained JSON from text-only input."""
+
+    text, _tokens = _call_openrouter_content(
+        model=model,
+        api_key=api_key,
+        content=[{"type": "text", "text": prompt}],
+        response_schema=response_schema,
+        timeout_sec=timeout_sec,
+        reasoning_effort=reasoning_effort,
+    )
+    return text
 
 
 def extract_pdf_effects(
@@ -215,6 +284,7 @@ def extract_pdf_effects(
     model: str = DEFAULT_MODEL,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     reasoning_effort: str = "",
+    cancel_event: threading.Event | None = None,
 ) -> ExtractionResult:
     source_pdf = pdf_path.name
     requested_ids = {row.row_id for row in rows}
@@ -232,28 +302,29 @@ def extract_pdf_effects(
             response_schema=response_schema,
             timeout_sec=timeout_sec,
             reasoning_effort=reasoning_effort,
+            cancel_event=cancel_event,
         )
     except ProviderError as exc:
         return ExtractionResult(
             source_pdf=source_pdf,
-            status="error",
+            status="cancelled" if isinstance(exc, ExtractionCancelled) else "error",
             error=str(exc),
             raw_response=exc.raw_response,
             duration_sec=time.monotonic() - started,
         )
 
     try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
+        parsed, repaired_response = parse_json_response(raw_text)
+    except ProviderError as exc:
         return ExtractionResult(
             source_pdf=source_pdf,
             status="error",
-            error=f"OpenRouter returned invalid JSON: {exc}",
+            error=str(exc),
             raw_response=raw_text,
             duration_sec=time.monotonic() - started,
         )
 
-    result: ValidationResult = validate_response(parsed, requested_ids)
+    result: ValidationResult = validate_response(parsed, requested_ids, manual.effects)
     duration = time.monotonic() - started
     if not result.ok:
         return ExtractionResult(
@@ -264,6 +335,7 @@ def extract_pdf_effects(
             extra_ids=result.extra_ids,
             error=result.error,
             raw_response=raw_text,
+            repaired_response=repaired_response,
             duration_sec=duration,
             input_tokens=tokens.get("input_tokens"),
             output_tokens=tokens.get("output_tokens"),
@@ -274,6 +346,7 @@ def extract_pdf_effects(
         status="ok",
         coded_by_row_id=result.coded_by_row_id,
         raw_response=raw_text,
+        repaired_response=repaired_response,
         duration_sec=duration,
         input_tokens=tokens.get("input_tokens"),
         output_tokens=tokens.get("output_tokens"),

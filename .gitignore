@@ -19,6 +19,9 @@ dev-projects/
 # Node (Tailwind/daisyUI CSS build tooling — dev-time only, not shipped)
 node_modules/
 
+# Release bundles built by scripts/build_release.sh — build artifacts, not source
+dist/
+
 # Editors
 .vscode/
 .idea/

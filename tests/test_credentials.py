@@ -7,6 +7,7 @@ import keyring.errors
 import pytest
 
 from meta_coder import credentials
+from meta_coder.web import Runtime
 
 
 class _FakeBackend(keyring.backend.KeyringBackend):
@@ -39,6 +40,16 @@ class _BrokenBackend(keyring.backend.KeyringBackend):
 
     def delete_password(self, service, username):
         raise keyring.errors.PasswordDeleteError("backend unavailable")
+
+
+@pytest.fixture
+def isolated_saved_key_flags(tmp_path, monkeypatch):
+    monkeypatch.setattr(credentials, "_saved_keys_path", lambda: tmp_path / "saved_api_keys.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_saved_key_flags(isolated_saved_key_flags):
+    """Never let credential tests touch the developer's real saved-key marker."""
 
 
 @pytest.fixture
@@ -76,6 +87,15 @@ def test_providers_are_isolated(fake_backend):
     assert credentials.load_key("openrouter") == "openrouter-key"
 
 
+def test_existing_keychain_key_can_be_discovered_without_a_marker(fake_backend):
+    fake_backend.set_password(credentials._SERVICE_NAME, "gemini", "existing-key")
+
+    assert credentials.saved_key_configured("gemini") is False
+    assert credentials.load_key("gemini") == "existing-key"
+    assert credentials.mark_saved_key_configured("gemini", True) is True
+    assert credentials.saved_key_configured("gemini") is True
+
+
 def test_unknown_provider_rejected_on_save(fake_backend):
     with pytest.raises(ValueError):
         credentials.save_key("bogus", "x")
@@ -94,5 +114,41 @@ def test_keyring_available_false_with_broken_backend(broken_backend):
     assert credentials.keyring_available() is False
 
 
-def test_load_key_returns_none_when_backend_broken(broken_backend):
-    assert credentials.load_key("gemini") is None
+def test_load_key_reports_when_backend_is_broken(broken_backend):
+    with pytest.raises(credentials.CredentialStoreError, match="could not be opened"):
+        credentials.load_key("gemini")
+
+
+def test_save_requires_successful_read_back(fake_backend, monkeypatch):
+    monkeypatch.setattr(keyring, "get_password", lambda *_args: None)
+
+    with pytest.raises(credentials.CredentialStoreError, match="did not return the key"):
+        credentials.save_key("gemini", "secret")
+
+    assert credentials.saved_key_configured("gemini") is False
+
+
+def test_runtime_never_accepts_a_session_only_key(monkeypatch):
+    runtime = Runtime()
+    monkeypatch.setattr(
+        credentials,
+        "save_key",
+        lambda *_args: (_ for _ in ()).throw(credentials.CredentialStoreError("save failed")),
+    )
+
+    with pytest.raises(credentials.CredentialStoreError, match="save failed"):
+        runtime.set_api_key("gemini", "secret")
+
+    assert runtime.api_key("gemini") is None
+    assert runtime.has_saved_key("gemini") is False
+
+
+def test_unlock_repairs_stale_saved_key_marker(fake_backend):
+    credentials.mark_saved_key_configured("gemini", True)
+    runtime = Runtime()
+    assert runtime.has_saved_key("gemini") is True
+
+    assert runtime.unlock_key("gemini") is False
+
+    assert runtime.has_saved_key("gemini") is False
+    assert credentials.saved_key_configured("gemini") is False

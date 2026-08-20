@@ -132,7 +132,6 @@
     bindText(block, "name", field);
     block.querySelector('[data-field="name"]').addEventListener("input", syncSummary);
     bindText(block, "description", field);
-    bindCheckbox(block, "required", field, false);
     bindCheckbox(block, "evidence_required", field, true);
 
     var typeSelect = block.querySelector('[data-field="type"]');
@@ -175,7 +174,6 @@
       [
         block.querySelector('[data-field="name"]'),
         block.querySelector('[data-field="description"]'),
-        block.querySelector('[data-field="required"]'),
         block.querySelector('[data-field="evidence_required"]'),
         typeSelect,
         addLevelBtn,
@@ -210,12 +208,8 @@
 
   var effectsList = document.getElementById("effect-fields-list");
 
-  state.effects.forEach(function (f) {
-    effectsList.appendChild(renderEffectField(f, false));
-  });
-
   document.getElementById("add-effect-field").addEventListener("click", function () {
-    var field = { name: "", type: "string", required: false, evidence_required: true, description: "", levels: [] };
+    var field = { name: "", type: "string", evidence_required: true, description: "", levels: [] };
     state.effects.push(field);
     effectsList.appendChild(renderEffectField(field, true));
   });
@@ -223,17 +217,125 @@
   ["name", "description", "effect_definition"].forEach(function (key) {
     var input = document.getElementById("manual-" + key.replace(/_/g, "-"));
     if (!input) return;
-    input.value = state[key] || "";
     input.addEventListener("input", function () {
       state[key] = input.value;
     });
   });
+
+  function replaceManualState(nextState) {
+    state = nextState || {};
+    state.effects = state.effects || [];
+    effectsList.innerHTML = "";
+    state.effects.forEach(function (field) {
+      effectsList.appendChild(renderEffectField(field, false));
+    });
+    ["name", "description", "effect_definition"].forEach(function (key) {
+      var input = document.getElementById("manual-" + key.replace(/_/g, "-"));
+      if (input) input.value = state[key] || "";
+    });
+  }
+
+  replaceManualState(state);
 
   var form = document.getElementById("manual-form");
   var hiddenInput = document.getElementById("manual-json-input");
   if (form) {
     form.addEventListener("submit", function () {
       hiddenInput.value = JSON.stringify(state);
+    });
+  }
+
+  // PDF/DOCX drafting stays on this page: the generic dropzone above triggers
+  // requestSubmit(), this handler uploads with fetch, and the validated candidate
+  // replaces only the editor's in-memory state. The saved YAML remains untouched
+  // until the user submits `manual-form`.
+  var draftForm = document.getElementById("manual-draft-form");
+  if (draftForm) {
+    var draftInput = draftForm.querySelector('input[type="file"]');
+    var draftZone = draftForm.querySelector("[data-dropzone]");
+    var draftStatus = document.getElementById("manual-draft-status");
+    var drafting = false;
+
+    function showDraftStatus(kind, message) {
+      if (!draftStatus) return;
+      draftStatus.className = "alert alert-" + kind + " mt-2";
+      draftStatus.textContent = message;
+    }
+
+    draftForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (drafting || !draftInput || !draftInput.files || !draftInput.files.length) return;
+      drafting = true;
+      var draftData = new FormData(draftForm);
+      draftInput.disabled = true;
+      if (draftZone) draftZone.setAttribute("aria-busy", "true");
+      showDraftStatus("info", "Uploading and drafting the coding manual… This may take a minute.");
+
+      fetch(draftForm.action, { method: "POST", body: draftData })
+        .then(function (response) {
+          return response.text().then(function (text) {
+            var payload;
+            try {
+              payload = JSON.parse(text);
+            } catch (_error) {
+              payload = {};
+            }
+            if (!response.ok) {
+              throw new Error(payload.error || payload.detail || "The coding-manual draft failed.");
+            }
+            return payload;
+          });
+        })
+        .then(function (payload) {
+          replaceManualState(payload.manual);
+
+          var badge = document.getElementById("manual-status-badge");
+          if (badge) {
+            badge.className = "badge badge-info";
+            badge.textContent = "Draft · not saved";
+          }
+          var sidebarBadge = document.getElementById("manual-sidebar-status");
+          if (sidebarBadge) sidebarBadge.className = "badge badge-info badge-xs ml-auto";
+
+          var notice = document.getElementById("manual-draft-notice");
+          if (notice) {
+            notice.classList.remove("hidden");
+            var filename = notice.querySelector("[data-manual-draft-filename]");
+            if (filename) filename.textContent = payload.filename || "manual document";
+          }
+          var incompleteWarning = document.getElementById("manual-incomplete-warning");
+          if (incompleteWarning) incompleteWarning.classList.add("hidden");
+
+          var saveButton = document.getElementById("manual-save-button");
+          if (saveButton) saveButton.textContent = "Validate and save draft";
+          var yamlKind = document.getElementById("manual-yaml-kind");
+          if (yamlKind) yamlKind.textContent = "drafted";
+          var yamlPreview = document.getElementById("manual-yaml-preview");
+          if (yamlPreview) yamlPreview.textContent = payload.yaml || "";
+
+          document.querySelectorAll("[data-requires-saved-manual]").forEach(function (button) {
+            button.disabled = true;
+          });
+          var runWarning = document.getElementById("manual-draft-run-warning");
+          if (runWarning) runWarning.classList.remove("hidden");
+
+          showDraftStatus(
+            "success",
+            "Draft ready from " + (payload.filename || "the uploaded document") +
+              ". Review it below; it has not been saved yet."
+          );
+        })
+        .catch(function (error) {
+          showDraftStatus("error", error.message || "The coding-manual draft failed.");
+        })
+        .finally(function () {
+          drafting = false;
+          draftInput.disabled = false;
+          draftInput.value = "";
+          if (draftZone) draftZone.removeAttribute("aria-busy");
+          var filenamePreview = draftZone && draftZone.querySelector("[data-dropzone-filename]");
+          if (filenamePreview) filenamePreview.textContent = "";
+        });
     });
   }
 })();
@@ -289,6 +391,104 @@ function initTabGroup(root, opts) {
   }
   activate(opts.forceTab || remembered || links[0] && links[0].getAttribute(opts.linkAttr));
 }
+
+// Live run progress: polls the /status JSON endpoint (already existed for the
+// old <meta http-equiv="refresh"> era's status-line; nothing previously read
+// it client-side) instead of reloading the whole page every 2s. Only updates
+// rows already present in the DOM — sort/pagination stay server-rendered, so a
+// PDF on another page of the run table just won't visibly update until the
+// page reloads at the end of the run.
+(function () {
+  var root = document.getElementById("run-progress");
+  if (!root || root.dataset.running !== "true") return;
+
+  var statusUrl = root.dataset.statusUrl;
+  var bar = root.querySelector("[data-progress-bar]");
+  var summary = root.querySelector("[data-progress-summary]");
+  var rowsByPdf = {};
+  root.querySelectorAll("[data-run-row]").forEach(function (tr) {
+    rowsByPdf[tr.getAttribute("data-run-row")] = tr;
+  });
+
+  var STATUS_BADGE = {
+    ok: '<span class="badge badge-success">ok</span>',
+    needs_review: '<span class="badge badge-warning">needs review</span>',
+    error: '<span class="badge badge-error">error</span>',
+    running: '<span class="badge badge-info">running</span>',
+    cancelled: '<span class="badge badge-ghost">cancelled</span>',
+    pending: '<span class="badge badge-ghost">pending</span>',
+  };
+
+  function applySnapshot(data) {
+    if (bar) {
+      bar.max = data.total || 1;
+      bar.value = data.processed || 0;
+    }
+    if (summary) {
+      summary.textContent = data.processed + " / " + data.total + " PDFs processed — " + data.status;
+    }
+    (data.pdfs || []).forEach(function (pdf) {
+      var tr = rowsByPdf[pdf.source_pdf];
+      if (!tr) return;
+      var statusCell = tr.querySelector("[data-run-status-cell]");
+      if (statusCell) {
+        var badge = STATUS_BADGE[pdf.status] || pdf.status;
+        if (pdf.status === "ok" && pdf.json_repaired) badge = badge.replace("</span>", " · repaired</span>");
+        statusCell.innerHTML = badge;
+      }
+      var inTok = tr.querySelector("[data-run-input-tokens]");
+      if (inTok) inTok.textContent = pdf.input_tokens != null ? pdf.input_tokens : "—";
+      var outTok = tr.querySelector("[data-run-output-tokens]");
+      if (outTok) outTok.textContent = pdf.output_tokens != null ? pdf.output_tokens : "—";
+      var detail = tr.querySelector("[data-run-detail]");
+      if (detail) {
+        var parts = [];
+        if (pdf.error) parts.push(pdf.error);
+        if (pdf.missing_ids && pdf.missing_ids.length) parts.push("missing: " + pdf.missing_ids.join(", "));
+        if (pdf.extra_ids && pdf.extra_ids.length) parts.push("unexpected: " + pdf.extra_ids.join(", "));
+        detail.textContent = parts.join(" ");
+      }
+    });
+  }
+
+  function poll() {
+    fetch(statusUrl, { headers: { Accept: "application/json" } })
+      .then(function (res) {
+        return res.json();
+      })
+      .then(function (data) {
+        applySnapshot(data);
+        if (data.status === "running" || data.status === "cancelling") {
+          setTimeout(poll, 1500);
+        } else {
+          // Terminal state reached (complete/failed/cancelled) — reload once
+          // to pick up the freshly server-rendered table (correct sort/paging,
+          // retry buttons, the Results tab appearing, etc.) rather than trying
+          // to replicate all of that in JS.
+          window.location.reload();
+        }
+      })
+      .catch(function () {
+        setTimeout(poll, 3000); // transient fetch failure — keep trying
+      });
+  }
+
+  setTimeout(poll, 1000);
+})();
+
+(function () {
+  var provider = document.getElementById("run-provider");
+  if (!provider) return;
+
+  function updateProviderSettings() {
+    document.querySelectorAll("[data-provider-setting]").forEach(function (setting) {
+      setting.hidden = setting.getAttribute("data-provider-setting") !== provider.value;
+    });
+  }
+
+  provider.addEventListener("change", updateProviderSettings);
+  updateProviderSettings();
+})();
 
 (function () {
   var tabRoot = document.getElementById("tab-root");

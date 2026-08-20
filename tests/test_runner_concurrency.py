@@ -123,3 +123,90 @@ def test_request_pacer_delay_is_global_not_per_worker(tmp_path, monkeypatch):
     # A correctly-global pacer spaces every start by >= delay.
     assert start_times[1] - start_times[0] >= delay * 0.8
     assert start_times[2] - start_times[1] >= delay * 0.8
+
+
+def _run_to_completion(runner, project_id, timeout=5):
+    deadline = time.monotonic() + timeout
+    while runner.is_running(project_id) and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+
+def test_retry_of_a_subset_does_not_blank_out_other_pdfs_results(tmp_path, monkeypatch):
+    """Regression test for the rehydration bug: a retry of just the failed PDF
+    must not overwrite coded_data.csv with blank rows for the PDF that already
+    succeeded in an earlier run and isn't part of this run at all."""
+
+    manual = parse_coding_manual(MANUAL_YAML)
+    project = _make_project(tmp_path)
+    sheet = _make_sheet(["ok.pdf", "bad.pdf"])
+
+    calls = []
+
+    def fake_extract(*, pdf_path, manual, rows, api_key, model, **_kwargs):
+        calls.append(pdf_path.name)
+        row = rows[0]
+        if pdf_path.name == "bad.pdf" and calls.count("bad.pdf") == 1:
+            return ExtractionResult(source_pdf=pdf_path.name, status="error", error="boom")
+        return ExtractionResult(
+            source_pdf=pdf_path.name,
+            status="ok",
+            coded_by_row_id={row.row_id: {"Condition": {"value": pdf_path.name, "evidence": "p1"}}},
+        )
+
+    monkeypatch.setattr(runner_module, "extract_pdf_effects", fake_extract)
+
+    runner = Runner()
+    runner.start(project=project, manual=manual, coding_sheet=sheet, api_key="fake")
+    _run_to_completion(runner, project.project_id)
+    state = runner.state(project.project_id)
+    assert state.status == "complete"
+    assert {p.source_pdf: p.status for p in state.pdfs} == {"ok.pdf": "ok", "bad.pdf": "error"}
+
+    # Retry only the failed PDF.
+    runner.start(
+        project=project, manual=manual, coding_sheet=sheet, api_key="fake", only_pdfs=["bad.pdf"]
+    )
+    _run_to_completion(runner, project.project_id)
+    state = runner.state(project.project_id)
+    assert state.status == "complete"
+    assert [p.source_pdf for p in state.pdfs] == ["bad.pdf"]
+    assert state.pdfs[0].status == "ok"
+
+    coded_csv = (project.output_dir / "coded_data.csv").read_text()
+    # ok.pdf's row must still show its prior successful code, not a blank
+    # "not_run" row, even though this run never touched ok.pdf at all.
+    assert ",ok.pdf," in coded_csv
+    assert "not_run" not in coded_csv
+
+
+def test_cancel_skips_unstarted_pdfs_but_keeps_completed_ones(tmp_path, monkeypatch):
+    manual = parse_coding_manual(MANUAL_YAML)
+    project = _make_project(tmp_path)
+    pdf_names = [f"paper{i}.pdf" for i in range(4)]
+    sheet = _make_sheet(pdf_names)
+
+    def fake_extract(*, pdf_path, manual, rows, api_key, model, **_kwargs):
+        time.sleep(0.1)
+        row = rows[0]
+        return ExtractionResult(
+            source_pdf=pdf_path.name,
+            status="ok",
+            coded_by_row_id={row.row_id: {"Condition": {"value": "x", "evidence": "p1"}}},
+        )
+
+    monkeypatch.setattr(runner_module, "extract_pdf_effects", fake_extract)
+
+    runner = Runner()
+    state = runner.start(
+        project=project, manual=manual, coding_sheet=sheet, api_key="fake", parallel_requests=1
+    )
+    time.sleep(0.05)  # let the first PDF start
+    runner.cancel(project.project_id)
+    assert state.status == "cancelling"
+    assert runner.is_running(project.project_id)  # cancelling still counts as "in progress"
+
+    _run_to_completion(runner, project.project_id)
+    assert state.status == "cancelled"
+    statuses = {p.status for p in state.pdfs}
+    assert "cancelled" in statuses  # at least one queued PDF never started
+    assert "ok" in statuses  # the in-flight one was allowed to finish, not killed

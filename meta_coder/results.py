@@ -47,7 +47,8 @@ def collate_results(
         evidence_row = dict(base)
         for field_name in effect_columns:
             field_value = coded.get(field_name) or {}
-            coded_row[field_name] = str(field_value.get("value", ""))
+            value = field_value.get("value", "")
+            coded_row[field_name] = "Not Reported" if value is None else str(value)
             evidence_row[field_name] = str(field_value.get("evidence", ""))
 
         coded_rows.append(coded_row)
@@ -95,6 +96,8 @@ def render_pdf_audit_yaml(
         effects[row.row_id] = entry
 
     data: dict[str, Any] = {"source_pdf": source_pdf, "status": result.status}
+    if result.repaired_response is not None:
+        data["json_repaired"] = True
     if result.error:
         data["error"] = result.error
     if result.missing_ids:

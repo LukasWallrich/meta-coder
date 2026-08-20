@@ -47,6 +47,45 @@ def test_build_response_schema_encodes_levels_as_enum():
     assert condition_value_schema["enum"] == ["Color-word Stroop", "Spatial Stroop"]
 
 
+def test_build_response_schema_requires_every_manual_field():
+    schema = build_response_schema(_manual())
+    required = schema["properties"]["effects"]["items"]["required"]
+    assert required == ["row_id", "Condition", "ResponseTimeMs", "notes"]
+
+
+def test_openrouter_schema_is_strict_compatible_and_allows_not_reported_null():
+    schema = build_response_schema(_manual(), dialect="json_schema")
+    item = schema["properties"]["effects"]["items"]
+    condition_value = item["properties"]["Condition"]["properties"]["value"]
+    assert schema["additionalProperties"] is False
+    assert item["additionalProperties"] is False
+    assert condition_value["type"] == ["string", "null"]
+    assert condition_value["enum"][-1] is None
+
+
+def test_validate_response_rejects_omitted_manual_field():
+    parsed = {"effects": [{"row_id": "row-1", "Condition": {"value": "Color-word Stroop"}}]}
+    result = validate_response(parsed, {"row-1"}, {"Condition", "ResponseTimeMs", "notes"})
+    assert not result.ok
+    assert "ResponseTimeMs" in (result.error or "")
+
+
+def test_validate_response_rejects_scalar_field_value():
+    parsed = {
+        "effects": [
+            {
+                "row_id": "row-1",
+                "Condition": {"value": "Color-word Stroop"},
+                "ResponseTimeMs": "Not Reported",
+                "notes": {"value": ""},
+            }
+        ]
+    }
+    result = validate_response(parsed, {"row-1"}, {"Condition", "ResponseTimeMs", "notes"})
+    assert not result.ok
+    assert "malformed" in (result.error or "")
+
+
 def test_validate_response_accepts_exact_id_match():
     requested = {"row-1", "row-2", "row-3"}
     parsed = {

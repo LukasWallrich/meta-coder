@@ -2,10 +2,9 @@
 (plan.md Part A6: "different models have very different sane concurrency/
 pacing defaults").
 
-The API key is deliberately NOT here: it's a global, per-provider, session-only
-value by default (see web.py's Runtime / the global Settings page — optionally
-persisted to the OS keyring, see credentials.py), not per-project — one key per
-provider is used across every project in a running session.
+The API key is deliberately NOT here: it is global per provider and persisted in
+the OS credential store (see credentials.py), not per-project. Once unlocked, one
+key per provider is used across every project in the running session.
 """
 
 from __future__ import annotations
@@ -23,7 +22,9 @@ MAX_PARALLEL_REQUESTS = 32
 MAX_REQUEST_DELAY_SEC = 3600
 MIN_REQUEST_TIMEOUT_SEC = 30
 MAX_REQUEST_TIMEOUT_SEC = 3600
-REASONING_EFFORTS = ("", "low", "medium", "high")
+# OpenRouter's supported effort vocabulary; the blank value delegates to the
+# selected model's default. Gemini ignores this provider-specific setting.
+REASONING_EFFORTS = ("", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass

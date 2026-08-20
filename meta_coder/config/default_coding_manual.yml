@@ -14,7 +14,6 @@ effects:
   # fully-specified field — replace or add to it with fields of your own.
   Publication status:
     type: string
-    required: true
     description: Whether the study report was published in a peer-reviewed venue.
     levels:
       - value: Published
