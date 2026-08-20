@@ -12,20 +12,6 @@ effect_definition: >
   does not ("incompatible"). Each coding sheet row is one such compatible-vs-
   incompatible contrast reported for one experiment or sample within the article.
 
-coding_sheet_fields:
-  # Already known from the meta-analysis roster — never asked of the LLM.
-  paper_id:
-    type: integer
-    description: Paper ID in the meta-analysis roster.
-  sample_number:
-    type: string
-    description: Sample identifier (e.g. S1, S2) when a paper reports more than one sample.
-  effect_letter:
-    type: string
-    description: Letter identifying this effect within the paper (e.g. A, B).
-  doi:
-    type: string
-
 effects:
   # --- Sample ---
   Age:

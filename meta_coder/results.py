@@ -12,17 +12,11 @@ from typing import Any
 import yaml
 
 from .coding_sheet import CodingSheet, CodingSheetRow
-from .gemini import ExtractionResult
+from .extraction import ExtractionResult
 from .manual import CodingManual
 
 
-BASE_COLUMNS = ("row_id", "source_pdf", "locator", "status")
-
-
-def _columns(manual: CodingManual) -> tuple[list[str], list[str]]:
-    sheet_columns = list(manual.coding_sheet_fields)
-    effect_columns = list(manual.effects)
-    return sheet_columns, effect_columns
+BASE_COLUMNS = ("row_id", "source_pdf", "locator", "authors", "year", "status")
 
 
 def collate_results(
@@ -31,7 +25,7 @@ def collate_results(
     coding_sheet: CodingSheet,
     results_by_pdf: dict[str, ExtractionResult],
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    sheet_columns, effect_columns = _columns(manual)
+    effect_columns = list(manual.effects)
     coded_rows: list[dict[str, str]] = []
     evidence_rows: list[dict[str, str]] = []
 
@@ -44,10 +38,10 @@ def collate_results(
             "row_id": row.row_id,
             "source_pdf": row.source_pdf,
             "locator": row.locator,
+            "authors": row.authors,
+            "year": row.year,
             "status": status,
         }
-        for col in sheet_columns:
-            base[col] = row.fields.get(col, "")
 
         coded_row = dict(base)
         evidence_row = dict(base)
@@ -63,8 +57,7 @@ def collate_results(
 
 
 def rows_to_csv(rows: list[dict[str, str]], manual: CodingManual) -> str:
-    sheet_columns, effect_columns = _columns(manual)
-    fieldnames = [*BASE_COLUMNS, *sheet_columns, *effect_columns]
+    fieldnames = [*BASE_COLUMNS, *manual.effects]
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     writer.writeheader()

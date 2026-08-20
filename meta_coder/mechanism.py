@@ -14,51 +14,81 @@ from typing import Any
 from .manual import CodingManual, FieldSpec
 
 
+# Two response-schema dialects share this same builder: Gemini's `responseSchema`
+# (uppercase type names, e.g. "STRING"/"OBJECT"/"ARRAY") and standard JSON Schema
+# (lowercase, "string"/"object"/"array") used for OpenRouter/OpenAI-style
+# `response_format.json_schema.schema`. Everything else about the shape — which
+# fields are required, evidence-per-field — is identical across both; only the
+# type-name casing differs, so one builder parameterized by dialect serves both
+# rather than duplicating the whole schema-construction logic per provider.
 GEMINI_TYPE = {
     "string": "STRING",
     "number": "NUMBER",
     "integer": "INTEGER",
     "boolean": "BOOLEAN",
+    "object": "OBJECT",
+    "array": "ARRAY",
 }
+JSON_SCHEMA_TYPE = {
+    "string": "string",
+    "number": "number",
+    "integer": "integer",
+    "boolean": "boolean",
+    "object": "object",
+    "array": "array",
+}
+DIALECTS = {"gemini": GEMINI_TYPE, "json_schema": JSON_SCHEMA_TYPE}
 
 
-def _value_schema(spec: FieldSpec) -> dict[str, Any]:
-    schema: dict[str, Any] = {"type": GEMINI_TYPE[spec.type]}
+def _value_schema(spec: FieldSpec, type_map: dict[str, str]) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": type_map[spec.type]}
     if spec.levels:
         schema["enum"] = [level.value for level in spec.levels]
     return schema
 
 
-def _coded_field_schema(name: str, spec: FieldSpec) -> dict[str, Any]:
-    properties: dict[str, Any] = {"value": _value_schema(spec)}
+def _coded_field_schema(name: str, spec: FieldSpec, type_map: dict[str, str]) -> dict[str, Any]:
+    properties: dict[str, Any] = {"value": _value_schema(spec, type_map)}
     required = ["value"]
     if spec.evidence_required:
         properties["evidence"] = {
-            "type": "STRING",
+            "type": type_map["string"],
             "description": "Page number and/or short quotation supporting this value.",
         }
         required.append("evidence")
     return {
-        "type": "OBJECT",
+        "type": type_map["object"],
         "description": spec.description or f"Coded value for `{name}`.",
         "properties": properties,
         "required": required,
     }
 
 
-def build_response_schema(manual: CodingManual) -> dict[str, Any]:
-    """Compile `manual.effects` into a Gemini structured-output response schema.
+def build_response_schema(manual: CodingManual, *, dialect: str = "gemini") -> dict[str, Any]:
+    """Compile `manual.effects` into a structured-output response schema.
 
-    `coding_sheet_fields` are deliberately excluded — they are never requested of
-    the model and are rejoined from the coding sheet at collation time.
+    The coding sheet's own columns (paper identification, effect ID, effect
+    location) are deliberately excluded — they are never requested of the model
+    and are rejoined from the coding sheet at collation time.
+
+    `required` only ever lists the fields actually marked required in the
+    manual — never every property (which OpenAI/OpenRouter's `strict: true`
+    json_schema mode demands, forcing optional fields to be modeled as
+    nullable instead of absent). Provider adapters using this in "json_schema"
+    dialect must NOT set `strict: true`, or a manual with any optional effect
+    field will be rejected by the provider.
     """
+
+    if dialect not in DIALECTS:
+        raise ValueError(f"Unknown schema dialect: {dialect!r} (use one of {sorted(DIALECTS)}).")
+    type_map = DIALECTS[dialect]
 
     if not manual.effects:
         raise ValueError("The coding manual must define at least one effect field.")
 
     effect_properties: dict[str, Any] = {
         "row_id": {
-            "type": "STRING",
+            "type": type_map["string"],
             "description": (
                 "Must exactly match one of the requested coding-sheet row IDs. "
                 "Never invent, rename, or omit this value."
@@ -67,18 +97,18 @@ def build_response_schema(manual: CodingManual) -> dict[str, Any]:
     }
     required = ["row_id"]
     for name, spec in manual.effects.items():
-        effect_properties[name] = _coded_field_schema(name, spec)
+        effect_properties[name] = _coded_field_schema(name, spec, type_map)
         if spec.required:
             required.append(name)
 
     return {
-        "type": "OBJECT",
+        "type": type_map["object"],
         "properties": {
             "effects": {
-                "type": "ARRAY",
+                "type": type_map["array"],
                 "description": "One entry per requested coding-sheet row.",
                 "items": {
-                    "type": "OBJECT",
+                    "type": type_map["object"],
                     "properties": effect_properties,
                     "required": required,
                 },

@@ -1,26 +1,23 @@
 name: untitled_meta_analysis
-description: Describe this meta-analysis in a sentence or two.
+description:
 
-effect_definition: >
-  State what comparison counts as "the effect" for this meta-analysis, e.g.
-  "the difference in response times between compatible and incompatible trials."
-  Every field description below should read as relative to this comparison.
-
-coding_sheet_fields:
-  # Supplied by the coding sheet (one row per effect-instance) and never sent to
-  # the model — rejoined into the output at collation time. Add whatever columns
-  # your coding sheet CSV provides beyond row_id/source_pdf/locator.
-  authors: {type: string}
-  year: {type: integer}
+# Required — left blank on purpose. There's no generic default that means
+# anything for an arbitrary meta-analysis, so this must stay empty (and the
+# manual stays invalid) until you state what comparison counts as "the
+# effect" here, e.g. "the difference in response times between compatible
+# and incompatible trials." Every field description below should read as
+# relative to this comparison.
+effect_definition:
 
 effects:
-  # Coded by the LLM, one object per coding sheet row. Replace this example field.
-  ExampleModerator:
+  # Coded by the LLM, one object per coding sheet row. Example of a real,
+  # fully-specified field — replace or add to it with fields of your own.
+  Publication status:
     type: string
     required: true
-    description: Replace with a real field description.
+    description: Whether the study report was published in a peer-reviewed venue.
     levels:
-      - value: Example level A
-        description: What distinguishes this level.
-      - value: Example level B
-        description: What distinguishes this level.
+      - value: Published
+        description: Appeared in a peer-reviewed journal or proceedings.
+      - value: Unpublished
+        description: Preprint, thesis, dissertation, or other non-peer-reviewed source.

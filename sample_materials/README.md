@@ -13,7 +13,11 @@ are left out for now, per your request.
   `row_id`s kept as `1_1_A` / `1_2_B` to match your existing `Old_Effect_ID`s, so
   results here join straight back into your existing dataset later. This paper has
   two experiments in one PDF (intact vs. broken objects) — a real instance of the
-  multi-condition-per-paper case the coding-sheet mechanism exists for.
+  multi-condition-per-paper case the coding-sheet mechanism exists for. The coding
+  sheet's columns are a fixed schema now (`row_id`, `source_pdf`, `locator`,
+  `authors`, `year` — nothing else), so `paper_id`/`sample_number`/`effect_letter`/
+  `doi` from the original roster aren't carried as separate columns here; the
+  `row_id` naming still encodes that same paper/sample/effect structure.
 - `known_values_for_verification.md` — the correct values for both rows, pulled
   from your own checked spreadsheet. Not an app input — for comparing against
   `coded_data.csv`/`evidence.csv` after a run.

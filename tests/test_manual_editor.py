@@ -1,4 +1,5 @@
 from meta_coder.manual import (
+    NOTES_FIELD_NAME,
     manual_from_editor_payload,
     manual_to_editor_payload,
     manual_to_yaml_text,
@@ -9,8 +10,6 @@ from meta_coder.manual import (
 MANUAL_YAML = """
 name: stroop_test
 effect_definition: The difference in RT between compatible and incompatible trials.
-coding_sheet_fields:
-  authors: {type: string}
 effects:
   Condition:
     type: string
@@ -35,8 +34,7 @@ def test_manual_to_editor_payload_is_json_safe_round_trip():
     rebuilt = manual_from_editor_payload(round_tripped)
 
     assert rebuilt.effect_definition == manual.effect_definition
-    assert set(rebuilt.coding_sheet_fields) == {"authors"}
-    assert set(rebuilt.effects) == {"Condition", "ResponseTimeMs"}
+    assert set(rebuilt.effects) == {"Condition", "ResponseTimeMs", "notes"}
     assert [level.value for level in rebuilt.effects["Condition"].levels] == ["No", "Yes"]
     assert rebuilt.effects["ResponseTimeMs"].evidence_required is False
 
@@ -54,6 +52,39 @@ def test_manual_from_editor_payload_rejects_duplicate_field_names():
         assert False, "expected ManualError"
     except Exception as exc:
         assert "duplicate" in str(exc).lower()
+
+
+def test_notes_field_is_always_added_and_required():
+    manual = parse_coding_manual(MANUAL_YAML)
+    notes = manual.effects[NOTES_FIELD_NAME]
+    assert notes.required is True
+    assert notes.evidence_required is False
+
+
+def test_notes_field_cannot_be_redefined_or_removed():
+    # An attempt to redefine `notes` (wrong type, not required, with levels) is
+    # silently overridden back to the canonical spec rather than honored — the
+    # field's whole point is that it's always present in the same shape.
+    payload = {
+        "effect_definition": "x",
+        "effects": [
+            {"name": "Age", "type": "string"},
+            {"name": NOTES_FIELD_NAME, "type": "boolean", "required": False},
+        ],
+    }
+    manual = manual_from_editor_payload(payload)
+    notes = manual.effects[NOTES_FIELD_NAME]
+    assert notes.type == "string"
+    assert notes.required is True
+    assert notes.evidence_required is False
+
+    # Omitting it entirely still results in it being present.
+    payload_without_notes = {
+        "effect_definition": "x",
+        "effects": [{"name": "Age", "type": "string"}],
+    }
+    manual = manual_from_editor_payload(payload_without_notes)
+    assert NOTES_FIELD_NAME in manual.effects
 
 
 def test_manual_to_yaml_text_produces_reparseable_yaml_with_yes_no_levels():

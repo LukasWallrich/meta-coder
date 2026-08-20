@@ -2,34 +2,80 @@
 {% block title %}Settings · Meta-Coder{% endblock %}
 {% block content %}
 
-<h1 class="text-2xl font-semibold mb-6">Settings</h1>
+<div class="mb-4">
+  <h1 class="text-2xl font-semibold">Settings</h1>
+  <p class="text-sm text-base-content/60 mt-1">Global configuration, shared across every project in this session.</p>
+</div>
 
-<div class="card bg-base-100 border border-base-300 max-w-xl">
+<div class="card bg-base-100 border border-base-300">
   <div class="card-body">
-    <div class="flex items-center justify-between">
-      <h2 class="card-title text-base">Gemini API key</h2>
-      {% if api_key_set %}
-      <span class="badge badge-success">Set for this session</span>
+    <h2 class="card-title text-base">API keys</h2>
+    <p class="text-sm text-base-content/60 -mt-1">
+      One key per provider, used across every project in this session.
+      {% if keyring_available %}
+      Check "remember" to also save it to your OS credential store so it's there next launch.
       {% else %}
-      <span class="badge badge-ghost">Not set</span>
+      Held in memory only — this system's OS credential store isn't available, so keys can't be remembered.
       {% endif %}
-    </div>
-    <p class="text-sm text-base-content/60">
-      Used across every project in this running session. Held in memory only —
-      never written to disk, never loaded automatically the next time you launch
-      the app. Get a key at
-      <a href="https://aistudio.google.com/app/apikey" target="_blank" class="link link-primary">Google AI Studio</a>.
     </p>
-    <form method="post" action="/{{ token }}/settings/api-key" class="flex gap-2 mt-2">
-      <input type="password" name="api_key" placeholder="Paste your Gemini API key"
-             class="input w-full" required>
-      <button type="submit" class="btn btn-primary">Save</button>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2">
+      {% for provider in providers %}
+      <div class="rounded-box border border-base-300 p-3">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-medium text-sm">{{ provider_labels.get(provider, provider) }}</h3>
+          {% if keys[provider] %}
+          <span class="badge badge-success badge-sm">Set{% if remembered[provider] %} · remembered{% endif %}</span>
+          {% else %}
+          <span class="badge badge-ghost badge-sm">Not set</span>
+          {% endif %}
+        </div>
+        {% if provider == "gemini" %}
+        <p class="text-xs text-base-content/50">
+          Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="link link-primary">Google AI Studio</a>.
+        </p>
+        {% elif provider == "openrouter" %}
+        <p class="text-xs text-base-content/50">
+          Get a key at <a href="https://openrouter.ai/settings/keys" target="_blank" class="link link-primary">openrouter.ai</a>.
+        </p>
+        {% endif %}
+
+        <form method="post" action="/{{ token }}/settings/api-key" class="mt-2">
+          <input type="hidden" name="provider" value="{{ provider }}">
+          <div class="flex gap-2">
+            <input type="password" name="api_key" placeholder="Paste your {{ provider_labels.get(provider, provider) }} API key"
+                   class="input input-sm flex-1 min-w-0" required>
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+          </div>
+          {% if keyring_available %}
+          <label class="label cursor-pointer justify-start gap-1 text-xs mt-1">
+            <input type="checkbox" name="remember" class="checkbox checkbox-xs" {% if remembered[provider] %}checked{% endif %}>
+            Remember on this device
+          </label>
+          {% endif %}
+        </form>
+
+        {% if keys[provider] %}
+        <form method="post" action="/{{ token }}/settings/api-key/clear" class="mt-1">
+          <input type="hidden" name="provider" value="{{ provider }}">
+          <button type="submit" class="btn btn-ghost btn-xs">Clear key</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="divider my-1"></div>
+
+    <form method="post" action="/{{ token }}/settings/app" class="flex items-end gap-3 flex-wrap">
+      <div>
+        <label class="fieldset-legend text-sm">Max PDF upload size (MB)</label>
+        <input type="number" name="upload_size_cap_mb" value="{{ app_settings.upload_size_cap_mb }}"
+               min="1" max="1024" class="input input-sm w-28">
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <p class="text-xs text-base-content/50">Applies to every project — larger PDFs are rejected on upload.</p>
     </form>
-    {% if api_key_set %}
-    <form method="post" action="/{{ token }}/settings/api-key/clear" class="mt-2">
-      <button type="submit" class="btn btn-ghost btn-sm">Clear key</button>
-    </form>
-    {% endif %}
   </div>
 </div>
 

@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheet
-from .gemini import DEFAULT_MODEL, ExtractionResult, extract_pdf_effects
+from .extraction import ExtractionResult
 from .manual import CodingManual
 from .projects import Project
+from .providers import DEFAULT_PROVIDER, default_model, extract_pdf_effects
 from .results import collate_results, render_pdf_audit_yaml, rows_to_csv
 
 
@@ -68,6 +69,8 @@ class PdfProgress:
     error: str | None = None
     missing_ids: list[str] = field(default_factory=list)
     extra_ids: list[str] = field(default_factory=list)
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 @dataclass
@@ -93,6 +96,8 @@ class RunState:
                     "error": p.error,
                     "missing_ids": p.missing_ids,
                     "extra_ids": p.extra_ids,
+                    "input_tokens": p.input_tokens,
+                    "output_tokens": p.output_tokens,
                 }
                 for p in self.pdfs
             ],
@@ -121,12 +126,17 @@ class Runner:
         manual: CodingManual,
         coding_sheet: CodingSheet,
         api_key: str,
-        model: str = DEFAULT_MODEL,
+        provider: str = DEFAULT_PROVIDER,
+        model: str | None = None,
         parallel_requests: int = 1,
         request_delay_sec: int = 0,
+        request_timeout_sec: int | None = None,
+        service_tier: str | None = None,
+        reasoning_effort: str = "",
     ) -> RunState:
         if self.is_running(project.project_id):
             raise RuntimeError("This project is already running.")
+        model = model or default_model(provider)
 
         pdf_names = sorted({row.source_pdf for row in coding_sheet.rows})
         state = RunState(
@@ -140,7 +150,20 @@ class Runner:
 
         thread = threading.Thread(
             target=self._run,
-            args=(project, manual, coding_sheet, api_key, model, state, parallel_requests, request_delay_sec),
+            args=(
+                project,
+                manual,
+                coding_sheet,
+                api_key,
+                provider,
+                model,
+                state,
+                parallel_requests,
+                request_delay_sec,
+                request_timeout_sec,
+                service_tier,
+                reasoning_effort,
+            ),
             daemon=True,
         )
         thread.start()
@@ -152,14 +175,23 @@ class Runner:
         manual: CodingManual,
         coding_sheet: CodingSheet,
         api_key: str,
+        provider: str,
         model: str,
         state: RunState,
         parallel_requests: int,
         request_delay_sec: int,
+        request_timeout_sec: int | None,
+        service_tier: str | None,
+        reasoning_effort: str,
     ) -> None:
         results_by_pdf: dict[str, ExtractionResult] = {}
         results_lock = threading.Lock()
         pacer = _RequestPacer(request_delay_sec)
+        provider_kwargs: dict[str, object] = {}
+        if service_tier:
+            provider_kwargs["service_tier"] = service_tier
+        if reasoning_effort:
+            provider_kwargs["reasoning_effort"] = reasoning_effort
 
         def process_one(progress: PdfProgress) -> None:
             progress.status = "running"
@@ -167,16 +199,21 @@ class Runner:
             rows = coding_sheet.rows_for_pdf(progress.source_pdf)
             pacer.wait()
             result = extract_pdf_effects(
+                provider=provider,
                 pdf_path=pdf_path,
                 manual=manual,
                 rows=rows,
                 api_key=api_key,
                 model=model,
+                timeout_sec=request_timeout_sec,
+                **provider_kwargs,
             )
             _raw_json_path(project, progress.source_pdf).write_text(
                 json.dumps(
                     {
                         "source_pdf": result.source_pdf,
+                        "provider": provider,
+                        "model": model,
                         "status": result.status,
                         "error": result.error,
                         "coded_by_row_id": result.coded_by_row_id,
@@ -203,6 +240,8 @@ class Runner:
                 progress.error = result.error
                 progress.missing_ids = sorted(result.missing_ids)
                 progress.extra_ids = sorted(result.extra_ids)
+                progress.input_tokens = result.input_tokens
+                progress.output_tokens = result.output_tokens
                 state.processed += 1
 
         try:

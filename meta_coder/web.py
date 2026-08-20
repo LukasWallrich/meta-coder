@@ -3,37 +3,47 @@ from __future__ import annotations
 import json
 import secrets
 import socket
+import subprocess
+import sys
+import tempfile
 import threading
 import webbrowser
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import credentials
+from .app_settings import AppSettings, load_app_settings, save_app_settings
 from .coding_sheet import read_coding_sheet
-from .gemini import DEFAULT_MODEL
 from .manual import (
     ManualError,
     manual_from_editor_payload,
     manual_to_editor_payload,
     parse_coding_manual,
 )
+from .openrouter import check_model as check_openrouter_model
 from .projects import (
     Project,
     ProjectError,
+    clear_output,
     create_project,
     delete_project,
     get_project,
     list_projects,
+    project_archive_files,
     read_manual_text,
     reset_manual_to_default,
     write_manual,
 )
+from .providers import PROVIDER_LABELS, PROVIDERS
 from .runner import Runner
-from .settings import RunSettings, load_run_settings, save_run_settings
+from .settings import REASONING_EFFORTS, RunSettings, load_run_settings, save_run_settings
 from .uploads import ProjectError as UploadProjectError  # re-export alias, same type
 from .uploads import list_uploaded_pdfs, save_pdf_upload
 
@@ -44,6 +54,61 @@ def _embeddable_json(data: object) -> str:
     the string from ever being interpreted as breaking out of the tag."""
 
     return json.dumps(data).replace("<", "\\u003c")
+
+
+RUN_PAGE_SIZE = 25
+RUN_SORT_COLUMNS = {"source_pdf", "authors", "year", "status", "input_tokens", "output_tokens"}
+
+
+def _run_table_rows(run_state, coding_sheet) -> list[dict]:
+    """One row per article/PDF being processed, joined with its paper-identification
+    columns from the coding sheet (its first row, if it has several effect rows)."""
+
+    first_row_by_pdf = {}
+    for row in coding_sheet.rows:
+        first_row_by_pdf.setdefault(row.source_pdf, row)
+
+    rows = []
+    for pdf in run_state.pdfs:
+        sheet_row = first_row_by_pdf.get(pdf.source_pdf)
+        rows.append(
+            {
+                "source_pdf": pdf.source_pdf,
+                "authors": sheet_row.authors if sheet_row else "",
+                "year": sheet_row.year if sheet_row else "",
+                "status": pdf.status,
+                "error": pdf.error,
+                "missing_ids": pdf.missing_ids,
+                "extra_ids": pdf.extra_ids,
+                "input_tokens": pdf.input_tokens,
+                "output_tokens": pdf.output_tokens,
+            }
+        )
+    return rows
+
+
+def _sort_run_rows(rows: list[dict], sort_key: str | None, direction: str | None) -> list[dict]:
+    if sort_key not in RUN_SORT_COLUMNS:
+        sort_key = "source_pdf"
+
+    def sort_value(row: dict):
+        value = row[sort_key]
+        if isinstance(value, str):
+            return value.lower()
+        # Only the token columns are ever None (not yet processed) — sort those
+        # to the low end regardless of direction, rather than crashing on a
+        # None-vs-int comparison.
+        return value if value is not None else -1
+
+    return sorted(rows, key=sort_value, reverse=(direction == "desc"))
+
+
+def _paginate(rows: list[dict], page: int, *, page_size: int = RUN_PAGE_SIZE):
+    total = len(rows)
+    total_pages = max(1, -(-total // page_size))  # ceil division
+    page = max(1, min(page or 1, total_pages))
+    start = (page - 1) * page_size
+    return rows[start : start + page_size], page, total_pages
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -69,16 +134,63 @@ class LocalSecurityMiddleware(BaseHTTPMiddleware):
 
 
 class Runtime:
+    """One API key slot per provider (todo.md step 9: a second provider means a
+    second key). Session-only by default, exactly like before; a key is only
+    ever loaded from the OS keyring at startup if it was explicitly saved there
+    on a previous run (see credentials.py) — nothing is remembered unless the
+    user opted in."""
+
     def __init__(self, projects_root: Path | None = None) -> None:
         self.projects_root = projects_root
-        self.session_api_key: str | None = None
         self.runner = Runner()
+        self._session_keys: dict[str, str] = {}
+        self._remembered: set[str] = set()
+        if credentials.keyring_available():
+            for provider in PROVIDERS:
+                saved = credentials.load_key(provider)
+                if saved:
+                    self._session_keys[provider] = saved
+                    self._remembered.add(provider)
 
     def project(self, project_id: str) -> Project:
         return get_project(project_id, root=self.projects_root)
 
+    def api_key(self, provider: str) -> str | None:
+        return self._session_keys.get(provider)
 
-def _project_view(runtime: Runtime, project: Project) -> dict:
+    def is_remembered(self, provider: str) -> bool:
+        return provider in self._remembered
+
+    def set_api_key(self, provider: str, key: str, *, remember: bool) -> None:
+        self._session_keys[provider] = key
+        if remember:
+            credentials.save_key(provider, key)
+            self._remembered.add(provider)
+        elif provider in self._remembered:
+            credentials.clear_key(provider)
+            self._remembered.discard(provider)
+
+    def clear_api_key(self, provider: str) -> None:
+        self._session_keys.pop(provider, None)
+        if provider in self._remembered:
+            credentials.clear_key(provider)
+            self._remembered.discard(provider)
+
+    def has_any_api_key(self) -> bool:
+        """For the global nav badge (base.html), which just needs "is there
+        something set" — per-project/per-provider detail lives on the pages
+        that actually care (the project's Run tab, the Settings page)."""
+        return bool(self._session_keys)
+
+
+def _project_view(
+    runtime: Runtime,
+    project: Project,
+    *,
+    run_sort: str | None = None,
+    run_dir: str | None = None,
+    run_page: int = 1,
+) -> dict:
     """Everything the project page template needs, recomputed fresh on every
     render — including coding-sheet validation, which must reflect the CURRENT
     set of uploaded PDFs, not the set at the time the sheet was last saved."""
@@ -87,7 +199,12 @@ def _project_view(runtime: Runtime, project: Project) -> dict:
     manual = None
     manual_error = None
     try:
-        manual = parse_coding_manual(manual_text)
+        # Lenient here: a blank `effect_definition` (the unedited starter manual's
+        # state) must still parse so the structured editor can render it, rather
+        # than falling back to the "unreadable, reset it" recovery screen. Actual
+        # run-readiness is gated on `manual.is_complete` below, not on this parse
+        # succeeding — see manual.py's `require_effect_definition`.
+        manual = parse_coding_manual(manual_text, require_effect_definition=False)
     except ManualError as exc:
         manual_error = str(exc)
 
@@ -101,21 +218,21 @@ def _project_view(runtime: Runtime, project: Project) -> dict:
     uploaded = list_uploaded_pdfs(project.sources_dir)
     uploaded_names = {p.name for p in uploaded}
 
-    coding_sheet = None
-    if manual is not None:
-        coding_sheet = read_coding_sheet(
-            project.coding_sheet_path, manual=manual, uploaded_filenames=uploaded_names
-        )
+    # No longer depends on `manual` — the coding sheet's columns are a fixed
+    # schema (see coding_sheet.py), not manual-configurable.
+    coding_sheet = read_coding_sheet(project.coding_sheet_path, uploaded_filenames=uploaded_names)
 
     run_state = runtime.runner.state(project.project_id)
     is_running = runtime.runner.is_running(project.project_id)
 
-    orphan_pdfs = sorted(uploaded_names - {row.source_pdf for row in coding_sheet.rows}) if coding_sheet else sorted(uploaded_names)
+    orphan_pdfs = sorted(uploaded_names - {row.source_pdf for row in coding_sheet.rows})
+    run_settings = load_run_settings(project)
+    api_key_set = bool(runtime.api_key(run_settings.provider))
 
     can_run = bool(
-        runtime.session_api_key
+        api_key_set
         and manual is not None
-        and coding_sheet is not None
+        and manual.is_complete
         and coding_sheet.is_valid
         and coding_sheet.rows
         and not is_running
@@ -124,6 +241,12 @@ def _project_view(runtime: Runtime, project: Project) -> dict:
     coded_csv = project.output_dir / "coded_data.csv"
     evidence_csv = project.output_dir / "evidence.csv"
     audit_files = sorted(project.audit_dir.glob("*.yaml")) if project.audit_dir.is_dir() else []
+
+    run_sort = run_sort if run_sort in RUN_SORT_COLUMNS else "source_pdf"
+    run_dir = run_dir if run_dir in ("asc", "desc") else "asc"
+    run_rows_all = _run_table_rows(run_state, coding_sheet) if run_state else []
+    run_rows_sorted = _sort_run_rows(run_rows_all, run_sort, run_dir)
+    run_rows_page, run_page, run_total_pages = _paginate(run_rows_sorted, run_page)
 
     return {
         "project": project,
@@ -137,11 +260,19 @@ def _project_view(runtime: Runtime, project: Project) -> dict:
         "run_state": run_state,
         "is_running": is_running,
         "can_run": can_run,
-        "api_key_set": bool(runtime.session_api_key),
-        "default_model": DEFAULT_MODEL,
+        "api_key_set": api_key_set,
+        "providers": PROVIDERS,
+        "provider_labels": PROVIDER_LABELS,
+        "reasoning_efforts": REASONING_EFFORTS,
         "has_results": coded_csv.is_file() and evidence_csv.is_file(),
         "audit_files": audit_files,
-        "run_settings": load_run_settings(project),
+        "run_settings": run_settings,
+        "run_rows": run_rows_page,
+        "run_row_count": len(run_rows_all),
+        "run_sort": run_sort,
+        "run_dir": run_dir,
+        "run_page": run_page,
+        "run_total_pages": run_total_pages,
     }
 
 
@@ -176,7 +307,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             {
                 "token": token,
                 "projects": list_projects(root=runtime.projects_root),
-                "api_key_set": bool(runtime.session_api_key),
+                "api_key_set": runtime.has_any_api_key(),
             },
         )
 
@@ -199,19 +330,72 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         delete_project(project)
         return RedirectResponse(f"/{token}/", status_code=303)
 
+    @app.post(f"/{token}/projects/{{project_id}}/clear-output")
+    async def clear_output_route(project_id: str):
+        project = runtime.project(project_id)
+        if runtime.runner.is_running(project_id):
+            raise HTTPException(status_code=409, detail="Cancel or wait for the active run first.")
+        clear_output(project)
+        return RedirectResponse(f"/{token}/projects/{project_id}?tab=manage", status_code=303)
+
+    @app.post(f"/{token}/projects/{{project_id}}/open-folder")
+    async def open_project_folder(project_id: str):
+        project = runtime.project(project_id)
+        # Local-only app (LocalSecurityMiddleware pins the host to 127.0.0.1/
+        # localhost, and the server itself only ever binds 127.0.0.1) — the
+        # browser and this process are always on the same machine, so opening
+        # a native file-manager window here is opening it for the same person
+        # looking at the page, not some remote party.
+        opener = {"darwin": "open", "win32": "explorer"}.get(sys.platform, "xdg-open")
+        try:
+            subprocess.Popen([opener, str(project.path)])
+        except OSError as exc:
+            return RedirectResponse(
+                f"/{token}/projects/{project_id}?tab=manage&error={quote(f'Could not open the folder: {exc}')}",
+                status_code=303,
+            )
+        return RedirectResponse(f"/{token}/projects/{project_id}?tab=manage", status_code=303)
+
+    @app.get(f"/{token}/projects/{{project_id}}/download/zip")
+    async def download_project_zip(project_id: str):
+        project = runtime.project(project_id)
+        files = project_archive_files(project)
+        handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+        tmp_path = Path(handle.name)
+        handle.close()
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for abs_path, arcname in files:
+                archive.write(abs_path, arcname)
+        return FileResponse(
+            tmp_path,
+            media_type="application/zip",
+            filename=f"{project.name}.zip",
+            background=BackgroundTask(tmp_path.unlink, missing_ok=True),
+        )
+
     @app.get(f"/{token}/projects/{{project_id}}", response_class=HTMLResponse)
-    async def project_page(request: Request, project_id: str, error: str | None = None):
+    async def project_page(
+        request: Request,
+        project_id: str,
+        error: str | None = None,
+        tab: str | None = None,
+        run_sort: str | None = None,
+        run_dir: str | None = None,
+        run_page: int = 1,
+    ):
         try:
             project = runtime.project(project_id)
         except ProjectError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        # `error` currently only ever comes from a redirected PDF-upload failure —
-        # jump the sidebar straight to that tab so the message is actually seen.
+        # `tab` lets a redirect (e.g. a Manage-tab action's error) jump the sidebar
+        # straight to a specific tab; `error` with no explicit `tab` historically
+        # only ever came from a redirected PDF-upload failure, so it still defaults
+        # to "sources" for backward compatibility.
         context = {
             "token": token,
             "error": error,
-            "force_tab": "sources" if error else None,
-            **_project_view(runtime, project),
+            "force_tab": tab or ("sources" if error else None),
+            **_project_view(runtime, project, run_sort=run_sort, run_dir=run_dir, run_page=run_page),
         }
         return TEMPLATES.TemplateResponse(request, "project.html", context)
 
@@ -220,35 +404,83 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         return TEMPLATES.TemplateResponse(
             request,
             "settings.html",
-            {"token": token, "api_key_set": bool(runtime.session_api_key)},
+            {
+                "token": token,
+                "api_key_set": runtime.has_any_api_key(),
+                "providers": PROVIDERS,
+                "provider_labels": PROVIDER_LABELS,
+                "keys": {p: bool(runtime.api_key(p)) for p in PROVIDERS},
+                "remembered": {p: runtime.is_remembered(p) for p in PROVIDERS},
+                "keyring_available": credentials.keyring_available(),
+                "app_settings": load_app_settings(),
+            },
         )
 
     @app.post(f"/{token}/settings/api-key")
-    async def set_api_key(api_key: str = Form(...)):
+    async def set_api_key(
+        provider: str = Form(...), api_key: str = Form(...), remember: bool = Form(False)
+    ):
+        if provider not in PROVIDERS:
+            raise HTTPException(status_code=400, detail="Unknown provider.")
         key = api_key.strip()
         if not key:
-            raise HTTPException(status_code=400, detail="Enter a Gemini API key.")
-        runtime.session_api_key = key
+            raise HTTPException(status_code=400, detail="Enter an API key.")
+        runtime.set_api_key(provider, key, remember=remember)
         return RedirectResponse(f"/{token}/settings", status_code=303)
 
     @app.post(f"/{token}/settings/api-key/clear")
-    async def clear_api_key():
-        runtime.session_api_key = None
+    async def clear_api_key(provider: str = Form(...)):
+        if provider not in PROVIDERS:
+            raise HTTPException(status_code=400, detail="Unknown provider.")
+        runtime.clear_api_key(provider)
+        return RedirectResponse(f"/{token}/settings", status_code=303)
+
+    @app.post(f"/{token}/settings/app")
+    async def save_app_settings_route(upload_size_cap_mb: int = Form(...)):
+        save_app_settings(AppSettings(upload_size_cap_mb=upload_size_cap_mb))
         return RedirectResponse(f"/{token}/settings", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/settings")
     async def save_project_settings(
         project_id: str,
-        model: str = Form(DEFAULT_MODEL),
+        provider: str = Form(...),
+        model: str = Form(""),
         parallel_requests: int = Form(1),
         request_delay_sec: int = Form(0),
+        request_timeout_sec: int = Form(0),
+        service_tier: str = Form(""),
+        reasoning_effort: str = Form(""),
     ):
         project = runtime.project(project_id)
         save_run_settings(
             project,
-            RunSettings(model=model, parallel_requests=parallel_requests, request_delay_sec=request_delay_sec),
+            RunSettings(
+                provider=provider,
+                model=model,
+                parallel_requests=parallel_requests,
+                request_delay_sec=request_delay_sec,
+                request_timeout_sec=request_timeout_sec,
+                service_tier=service_tier,
+                reasoning_effort=reasoning_effort,
+            ),
         )
-        return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
+        return RedirectResponse(f"/{token}/projects/{project_id}?tab=run", status_code=303)
+
+    @app.post(f"/{token}/projects/{{project_id}}/check-model")
+    async def check_model_route(project_id: str, provider: str = Form(...), model: str = Form(...)):
+        runtime.project(project_id)  # validates project_id, raises 404 via ProjectError if bad
+        if provider != "openrouter":
+            message = "Live model validation is only available for OpenRouter."
+        else:
+            problems = check_openrouter_model(model, api_key=runtime.api_key(provider) or "")
+            message = (
+                "; ".join(problems)
+                if problems
+                else f"`{model}` looks good — supports structured output and file input."
+            )
+        return RedirectResponse(
+            f"/{token}/projects/{project_id}?tab=run&error={quote(message)}", status_code=303
+        )
 
     @app.post(f"/{token}/projects/{{project_id}}/manual")
     async def save_manual(request: Request, project_id: str, manual_json: str = Form(...)):
@@ -309,10 +541,11 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
     @app.post(f"/{token}/projects/{{project_id}}/uploads")
     async def upload_pdfs(project_id: str, files: list[UploadFile] = File(...)):
         project = runtime.project(project_id)
+        max_bytes = load_app_settings().upload_size_cap_bytes
         errors = []
         for upload in files:
             try:
-                save_pdf_upload(project.sources_dir, upload.filename or "", upload.file)
+                save_pdf_upload(project.sources_dir, upload.filename or "", upload.file, max_bytes=max_bytes)
             except UploadProjectError as exc:
                 errors.append(str(exc))
         if errors:
@@ -334,31 +567,38 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
     async def start_run(project_id: str):
         project = runtime.project(project_id)
         view = _project_view(runtime, project)
+        settings = view["run_settings"]
         if not view["can_run"]:
             reasons = []
-            if not runtime.session_api_key:
-                reasons.append("a Gemini API key is required (set it in Settings)")
+            if not runtime.api_key(settings.provider):
+                reasons.append(
+                    f"a {PROVIDER_LABELS.get(settings.provider, settings.provider)} API key "
+                    "is required (set it in Settings)"
+                )
             if view["manual_error"]:
                 reasons.append("the coding manual has a validation error")
-            if view["coding_sheet"] is None or not view["coding_sheet"].is_valid:
+            if not view["coding_sheet"].is_valid:
                 reasons.append("the coding sheet has validation errors")
-            if view["coding_sheet"] is not None and not view["coding_sheet"].rows:
+            elif not view["coding_sheet"].rows:
                 reasons.append("the coding sheet has no rows")
             if runtime.runner.is_running(project_id):
                 reasons.append("a run is already in progress")
             raise HTTPException(status_code=400, detail="Cannot run: " + "; ".join(reasons) + ".")
 
-        settings = view["run_settings"]
         runtime.runner.start(
             project=project,
             manual=view["manual"],
             coding_sheet=view["coding_sheet"],
-            api_key=runtime.session_api_key,
+            api_key=runtime.api_key(settings.provider),
+            provider=settings.provider,
             model=settings.model,
             parallel_requests=settings.parallel_requests,
             request_delay_sec=settings.request_delay_sec,
+            request_timeout_sec=settings.request_timeout_sec,
+            service_tier=settings.service_tier,
+            reasoning_effort=settings.reasoning_effort,
         )
-        return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
+        return RedirectResponse(f"/{token}/projects/{project_id}?tab=run", status_code=303)
 
     @app.get(f"/{token}/projects/{{project_id}}/status")
     async def run_status(project_id: str):

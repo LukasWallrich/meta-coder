@@ -9,6 +9,7 @@ dependencies = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "PyYAML>=6.0",
+    "keyring>=24.0",
 ]
 
 [project.optional-dependencies]

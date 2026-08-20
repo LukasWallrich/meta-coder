@@ -2,9 +2,9 @@
 
 See plan.md "Problem 1". A coding manual is the single source of truth for what
 gets coded: an `effect_definition` (what comparison counts as "the effect" for this
-meta-analysis), a set of `coding_sheet_fields` (supplied by the coding sheet, never
-asked of the LLM), and a set of `effects` fields (LLM-coded, each optionally
-categorical via `levels`).
+meta-analysis) and a set of `effects` fields (LLM-coded, each optionally categorical
+via `levels`). The coding sheet's own columns (paper identification, effect ID,
+effect location — see coding_sheet.py) are a fixed schema, not manual-configurable.
 """
 
 from __future__ import annotations
@@ -17,6 +17,18 @@ import yaml
 
 
 SUPPORTED_TYPES = {"string", "number", "integer", "boolean"}
+
+# Every manual gets this effect field forced onto it — see `_build_manual_from_raw`,
+# which injects it after parsing and discards whatever the caller supplied for it.
+# Not sourced from the PDF text itself, so `evidence_required` is False: there's
+# nothing to cite a page/quote for.
+NOTES_FIELD_NAME = "notes"
+NOTES_FIELD_DESCRIPTION = (
+    "Explain any issues coding this effect for this row: the value could not be "
+    "located, had to be inferred or approximated, was ambiguous between multiple "
+    "candidates, or came from outside the main text (e.g. supplementary materials, "
+    "an appendix). Leave empty only if nothing about coding this row was noteworthy."
+)
 
 
 class ManualError(ValueError):
@@ -42,14 +54,32 @@ class FieldSpec:
         return bool(self.levels)
 
 
+def _notes_field_spec() -> FieldSpec:
+    return FieldSpec(
+        type="string",
+        description=NOTES_FIELD_DESCRIPTION,
+        required=True,
+        levels=[],
+        evidence_required=False,
+    )
+
+
 @dataclass
 class CodingManual:
     name: str
     description: str | None
     effect_definition: str
-    coding_sheet_fields: dict[str, FieldSpec]
     effects: dict[str, FieldSpec]
     raw_text: str = ""
+
+    @property
+    def is_complete(self) -> bool:
+        """True once the manual has real content, not just the unedited starter
+        manual's blank `effect_definition` (see `parse_coding_manual`'s
+        `require_effect_definition=False` display path — that path lets an
+        incomplete manual still parse so the structured editor can render it,
+        but callers must check this before treating it as run-ready)."""
+        return bool(self.effect_definition)
 
 
 def _require_mapping(value: object, label: str) -> dict:
@@ -129,7 +159,9 @@ def _parse_section(raw: object, section: str, *, allow_empty: bool) -> dict[str,
     return out
 
 
-def _build_manual_from_raw(raw: object, *, raw_text: str = "") -> CodingManual:
+def _build_manual_from_raw(
+    raw: object, *, raw_text: str = "", require_effect_definition: bool = True
+) -> CodingManual:
     """Shared validation core: `raw` is the plain dict/list structure produced by
     either yaml.safe_load (text path) or json.loads (structured-editor path) — both
     parse into the same basic Python types, so one validator serves both.
@@ -139,7 +171,7 @@ def _build_manual_from_raw(raw: object, *, raw_text: str = "") -> CodingManual:
         raise ManualError("The coding manual must contain a top-level mapping.")
 
     effect_definition = str(raw.get("effect_definition") or "").strip()
-    if not effect_definition:
+    if require_effect_definition and not effect_definition:
         raise ManualError(
             "`effect_definition` is required: state what comparison counts as "
             "\"the effect\" for this meta-analysis, e.g. \"the difference in response "
@@ -149,29 +181,24 @@ def _build_manual_from_raw(raw: object, *, raw_text: str = "") -> CodingManual:
     name = str(raw.get("name") or "untitled_meta_analysis").strip()
     description = raw.get("description")
 
-    coding_sheet_fields = _parse_section(
-        raw.get("coding_sheet_fields"), "coding_sheet_fields", allow_empty=True
-    )
     effects = _parse_section(raw.get("effects"), "effects", allow_empty=False)
 
-    overlap = set(coding_sheet_fields) & set(effects)
-    if overlap:
-        raise ManualError(
-            "Fields cannot appear in both `coding_sheet_fields` and `effects`: "
-            + ", ".join(sorted(overlap))
-        )
+    # Force this onto every manual, discarding whatever the caller supplied for
+    # it (if anything) — see NOTES_FIELD_NAME above. Popped first so it always
+    # lands last regardless of where it appeared in the input.
+    effects.pop(NOTES_FIELD_NAME, None)
+    effects[NOTES_FIELD_NAME] = _notes_field_spec()
 
     return CodingManual(
         name=name,
         description=str(description).strip() if description else None,
         effect_definition=effect_definition,
-        coding_sheet_fields=coding_sheet_fields,
         effects=effects,
         raw_text=raw_text,
     )
 
 
-def parse_coding_manual(text: str) -> CodingManual:
+def parse_coding_manual(text: str, *, require_effect_definition: bool = True) -> CodingManual:
     try:
         raw = yaml.safe_load(text) or {}
     except yaml.YAMLError as exc:
@@ -182,13 +209,17 @@ def parse_coding_manual(text: str) -> CodingManual:
                 f"Invalid YAML at line {mark.line + 1}, column {mark.column + 1}: {problem}"
             ) from exc
         raise ManualError(f"Invalid YAML: {problem}") from exc
-    return _build_manual_from_raw(raw, raw_text=text)
+    return _build_manual_from_raw(
+        raw, raw_text=text, require_effect_definition=require_effect_definition
+    )
 
 
-def read_coding_manual(path: Path) -> CodingManual:
+def read_coding_manual(path: Path, *, require_effect_definition: bool = True) -> CodingManual:
     if not path.is_file():
         raise FileNotFoundError(f"Coding manual not found: {path}")
-    return parse_coding_manual(path.read_text(encoding="utf-8"))
+    return parse_coding_manual(
+        path.read_text(encoding="utf-8"), require_effect_definition=require_effect_definition
+    )
 
 
 # --- Structured-editor payload <-> CodingManual -----------------------------
@@ -221,9 +252,6 @@ def manual_from_editor_payload(payload: object) -> CodingManual:
         "name": payload.get("name"),
         "description": payload.get("description"),
         "effect_definition": payload.get("effect_definition"),
-        "coding_sheet_fields": _payload_list_to_mapping(
-            payload.get("coding_sheet_fields") or [], "coding_sheet_fields"
-        ),
         "effects": _payload_list_to_mapping(payload.get("effects") or [], "effects"),
     }
     return _build_manual_from_raw(raw)
@@ -245,9 +273,6 @@ def manual_to_editor_payload(manual: CodingManual) -> dict[str, Any]:
         "name": manual.name,
         "description": manual.description or "",
         "effect_definition": manual.effect_definition,
-        "coding_sheet_fields": [
-            _field_to_payload(name, spec) for name, spec in manual.coding_sheet_fields.items()
-        ],
         "effects": [_field_to_payload(name, spec) for name, spec in manual.effects.items()],
     }
 
@@ -275,10 +300,6 @@ def manual_to_yaml_text(manual: CodingManual) -> str:
     if manual.description:
         data["description"] = manual.description
     data["effect_definition"] = manual.effect_definition
-    if manual.coding_sheet_fields:
-        data["coding_sheet_fields"] = {
-            name: field_dict(spec) for name, spec in manual.coding_sheet_fields.items()
-        }
     data["effects"] = {name: field_dict(spec) for name, spec in manual.effects.items()}
 
     return yaml.dump(data, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100)

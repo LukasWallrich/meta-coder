@@ -1,7 +1,7 @@
 import yaml
 
 from meta_coder.coding_sheet import CodingSheet, CodingSheetRow
-from meta_coder.gemini import ExtractionResult
+from meta_coder.extraction import ExtractionResult
 from meta_coder.manual import parse_coding_manual
 from meta_coder.results import collate_results, render_pdf_audit_yaml
 
@@ -9,8 +9,6 @@ from meta_coder.results import collate_results, render_pdf_audit_yaml
 MANUAL_YAML = """
 name: t
 effect_definition: x
-coding_sheet_fields:
-  authors: {type: string}
 effects:
   Condition: {type: string}
   ResponseTimeMs: {type: number}
@@ -21,9 +19,9 @@ def test_collate_joins_coding_sheet_fields_and_marks_status():
     manual = parse_coding_manual(MANUAL_YAML)
     sheet = CodingSheet(
         rows=[
-            CodingSheetRow("r1", "paper.pdf", "Exp 1", {"authors": "Smith"}),
-            CodingSheetRow("r2", "paper.pdf", "Exp 2", {"authors": "Smith"}),
-            CodingSheetRow("r3", "other.pdf", "Exp 1", {"authors": "Jones"}),
+            CodingSheetRow("r1", "paper.pdf", "Exp 1", "Smith", "2020"),
+            CodingSheetRow("r2", "paper.pdf", "Exp 2", "Smith", "2020"),
+            CodingSheetRow("r3", "other.pdf", "Exp 1", "Jones", "2019"),
         ],
         issues=[],
     )
@@ -59,8 +57,8 @@ def test_collate_joins_coding_sheet_fields_and_marks_status():
 def test_audit_yaml_is_readable_and_shows_missing_rows():
     manual = parse_coding_manual(MANUAL_YAML)
     rows = [
-        CodingSheetRow("r1", "paper.pdf", "Exp 1", {"authors": "Smith"}),
-        CodingSheetRow("r2", "paper.pdf", "Exp 2", {"authors": "Smith"}),
+        CodingSheetRow("r1", "paper.pdf", "Exp 1", "Smith", "2020"),
+        CodingSheetRow("r2", "paper.pdf", "Exp 2", "Smith", "2020"),
     ]
     # r2 was requested but the model never returned it — needs_review.
     result = ExtractionResult(

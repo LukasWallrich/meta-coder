@@ -9,7 +9,7 @@ import time
 
 import meta_coder.runner as runner_module
 from meta_coder.coding_sheet import CodingSheet, CodingSheetRow
-from meta_coder.gemini import ExtractionResult
+from meta_coder.extraction import ExtractionResult
 from meta_coder.manual import parse_coding_manual
 from meta_coder.projects import Project
 from meta_coder.runner import Runner
@@ -44,7 +44,7 @@ def test_concurrent_run_attributes_results_to_the_correct_pdf(tmp_path, monkeypa
     pdf_names = [f"paper{i}.pdf" for i in range(5)]
     sheet = _make_sheet(pdf_names)
 
-    def fake_extract(*, pdf_path, manual, rows, api_key, model):
+    def fake_extract(*, pdf_path, manual, rows, api_key, model, **_kwargs):
         time.sleep(0.05)  # encourage real interleaving between workers
         row = rows[0]
         return ExtractionResult(
@@ -88,7 +88,7 @@ def test_request_pacer_delay_is_global_not_per_worker(tmp_path, monkeypatch):
     lock = threading.Lock()
     start_times = []
 
-    def fake_extract(*, pdf_path, manual, rows, api_key, model):
+    def fake_extract(*, pdf_path, manual, rows, api_key, model, **_kwargs):
         with lock:
             start_times.append(time.monotonic())
         row = rows[0]

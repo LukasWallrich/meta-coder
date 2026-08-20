@@ -36,3 +36,36 @@ def test_corrupt_settings_file_falls_back_to_defaults(tmp_path):
     settings_path.write_text("not json", encoding="utf-8")
     settings = load_run_settings(project)
     assert settings.parallel_requests == 1
+
+
+def test_unknown_provider_falls_back_to_default_provider_and_model():
+    settings = RunSettings(provider="bogus").clamped()
+    assert settings.provider == "gemini"
+    assert settings.model  # a real default model string, not blank
+
+
+def test_blank_model_falls_back_to_the_selected_providers_default():
+    settings = RunSettings(provider="openrouter", model="").clamped()
+    assert settings.provider == "openrouter"
+    assert settings.model == "openai/gpt-4o-mini"
+
+
+def test_zero_timeout_falls_back_to_the_providers_default_timeout():
+    gemini_settings = RunSettings(provider="gemini", request_timeout_sec=0).clamped()
+    openrouter_settings = RunSettings(provider="openrouter", request_timeout_sec=0).clamped()
+    assert gemini_settings.request_timeout_sec == 600
+    assert openrouter_settings.request_timeout_sec == 600
+
+
+def test_out_of_range_timeout_is_clamped():
+    settings = RunSettings(request_timeout_sec=5).clamped()
+    assert settings.request_timeout_sec == 30  # MIN_REQUEST_TIMEOUT_SEC
+    settings = RunSettings(request_timeout_sec=999999).clamped()
+    assert settings.request_timeout_sec == 3600  # MAX_REQUEST_TIMEOUT_SEC
+
+
+def test_invalid_reasoning_effort_is_dropped_not_saved():
+    settings = RunSettings(reasoning_effort="ultra-mega").clamped()
+    assert settings.reasoning_effort == ""
+    settings = RunSettings(reasoning_effort="HIGH").clamped()
+    assert settings.reasoning_effort == "high"

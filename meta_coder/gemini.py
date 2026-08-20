@@ -13,17 +13,18 @@ import json
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheetRow
+from .extraction import ExtractionResult, ProviderError
 from .manual import CodingManual
 from .mechanism import ValidationResult, build_response_schema, validate_response
 
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_TIMEOUT_SEC = 600
 DEFAULT_SERVICE_TIER = "flex"  # 50% lower cost, variable latency/best-effort availability
 
 BASELINE_RULES = """You are a research assistant coding effects for a meta-analysis.
@@ -42,26 +43,6 @@ Rules:
 6. Every object in "effects" MUST include a "row_id" that exactly matches one of the
    requested row IDs below. Never invent, rename, or omit a row_id. Return exactly
    one object per requested row, no more, no fewer."""
-
-
-class GeminiError(RuntimeError):
-    def __init__(self, message: str, *, raw_response: str | None = None) -> None:
-        super().__init__(message)
-        self.raw_response = raw_response
-
-
-@dataclass
-class ExtractionResult:
-    source_pdf: str
-    status: str  # "ok" | "needs_review" | "error"
-    coded_by_row_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    missing_ids: set[str] = field(default_factory=set)
-    extra_ids: set[str] = field(default_factory=set)
-    raw_response: str | None = None
-    error: str | None = None
-    duration_sec: float = 0.0
-    input_tokens: int | None = None
-    output_tokens: int | None = None
 
 
 def _build_prompt(manual: CodingManual, rows: list[CodingSheetRow]) -> str:
@@ -86,7 +67,7 @@ def _call_gemini(
     prompt: str,
     pdf_bytes: bytes,
     response_schema: dict[str, Any],
-    timeout_sec: int = 600,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     service_tier: str = DEFAULT_SERVICE_TIER,
 ) -> tuple[str, dict[str, int | None]]:
     url = f"{API_BASE}/models/{model}:generateContent?key={api_key}"
@@ -126,9 +107,9 @@ def _call_gemini(
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = _redact(exc.read().decode("utf-8", errors="replace"), api_key)
-        raise GeminiError(f"Gemini API error ({exc.code}): {detail}") from exc
+        raise ProviderError(f"Gemini API error ({exc.code}): {detail}") from exc
     except urllib.error.URLError as exc:
-        raise GeminiError(f"Could not reach Gemini: {_redact(str(exc.reason), api_key)}") from exc
+        raise ProviderError(f"Could not reach Gemini: {_redact(str(exc.reason), api_key)}") from exc
 
     candidates = body.get("candidates") or []
     parts = []
@@ -139,7 +120,7 @@ def _call_gemini(
     text = "".join(parts)
     if not text.strip():
         finish_reason = (candidates[0].get("finishReason") if candidates else None) or "unknown"
-        raise GeminiError(f"Gemini returned no text (finishReason: {finish_reason}).")
+        raise ProviderError(f"Gemini returned no text (finishReason: {finish_reason}).")
 
     usage = body.get("usageMetadata") or {}
     tokens = {
@@ -156,7 +137,7 @@ def extract_pdf_effects(
     rows: list[CodingSheetRow],
     api_key: str,
     model: str = DEFAULT_MODEL,
-    timeout_sec: int = 600,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     service_tier: str = DEFAULT_SERVICE_TIER,
 ) -> ExtractionResult:
     source_pdf = pdf_path.name
@@ -175,7 +156,7 @@ def extract_pdf_effects(
             timeout_sec=timeout_sec,
             service_tier=service_tier,
         )
-    except GeminiError as exc:
+    except ProviderError as exc:
         return ExtractionResult(
             source_pdf=source_pdf,
             status="error",

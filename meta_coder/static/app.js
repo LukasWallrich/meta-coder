@@ -70,8 +70,13 @@
   if (!dataEl) return; // manual couldn't be loaded — reset-to-default UI shown instead
 
   var state = JSON.parse(dataEl.textContent);
-  state.coding_sheet_fields = state.coding_sheet_fields || [];
   state.effects = state.effects || [];
+
+  // Matches meta_coder/manual.py's NOTES_FIELD_NAME — the server forces this
+  // field onto every manual and discards any edits to it, so the editor locks
+  // it too rather than letting a user "successfully" edit something that gets
+  // silently reverted on save.
+  var RESERVED_EFFECT_FIELD_NAME = "notes";
 
   function cloneTemplate(id) {
     return document.getElementById(id).content.firstElementChild.cloneNode(true);
@@ -96,22 +101,6 @@
     });
   }
 
-  function renderCodingSheetField(field) {
-    var row = cloneTemplate("tmpl-coding-sheet-field");
-    bindText(row, "name", field);
-    row.querySelector('[data-field="type"]').value = field.type || "string";
-    row.querySelector('[data-field="type"]').addEventListener("change", function (e) {
-      field.type = e.target.value;
-    });
-    bindText(row, "description", field);
-    row.querySelector("[data-remove-row]").addEventListener("click", function () {
-      var idx = state.coding_sheet_fields.indexOf(field);
-      if (idx >= 0) state.coding_sheet_fields.splice(idx, 1);
-      row.remove();
-    });
-    return row;
-  }
-
   function renderLevel(field, level, listEl) {
     var row = cloneTemplate("tmpl-level");
     bindText(row, "value", level);
@@ -130,6 +119,7 @@
   function renderEffectField(field, openByDefault) {
     field.levels = field.levels || [];
     var block = cloneTemplate("tmpl-effect-field");
+    var locked = field.name === RESERVED_EFFECT_FIELD_NAME;
     if (openByDefault) block.open = true;
 
     var summaryName = block.querySelector("[data-summary-name]");
@@ -173,36 +163,55 @@
     refreshLevelsVisibility();
     syncSummary();
 
-    block.querySelector("[data-add-level]").addEventListener("click", function () {
+    var addLevelBtn = block.querySelector("[data-add-level]");
+    addLevelBtn.addEventListener("click", function () {
       var level = { value: "", description: "" };
       field.levels.push(level);
       renderLevel(field, level, levelsList);
     });
 
-    block.querySelector("[data-remove-row]").addEventListener("click", function (e) {
-      e.preventDefault(); // inside a <summary> — don't toggle collapse on remove
-      var idx = state.effects.indexOf(field);
-      if (idx >= 0) state.effects.splice(idx, 1);
-      block.remove();
-    });
+    var removeBtn = block.querySelector("[data-remove-row]");
+    if (locked) {
+      [
+        block.querySelector('[data-field="name"]'),
+        block.querySelector('[data-field="description"]'),
+        block.querySelector('[data-field="required"]'),
+        block.querySelector('[data-field="evidence_required"]'),
+        typeSelect,
+        addLevelBtn,
+      ].forEach(function (el) {
+        el.disabled = true;
+      });
+      levelsSection.classList.add("hidden");
+      removeBtn.remove();
+
+      var lockBadge = document.createElement("span");
+      lockBadge.className = "badge badge-ghost badge-sm ml-2";
+      lockBadge.textContent = "auto";
+      summaryType.insertAdjacentElement("afterend", lockBadge);
+
+      var lockNote = document.createElement("p");
+      lockNote.className = "text-xs text-base-content/50 mt-2";
+      lockNote.textContent =
+        "Added automatically to every coding manual — the model uses it to explain " +
+        "any issues it had coding this row. Can't be edited or removed.";
+      block.querySelector(".collapse-content").appendChild(lockNote);
+    } else {
+      removeBtn.addEventListener("click", function (e) {
+        e.preventDefault(); // inside a <summary> — don't toggle collapse on remove
+        var idx = state.effects.indexOf(field);
+        if (idx >= 0) state.effects.splice(idx, 1);
+        block.remove();
+      });
+    }
 
     return block;
   }
 
-  var codingSheetList = document.getElementById("coding-sheet-fields-list");
   var effectsList = document.getElementById("effect-fields-list");
 
-  state.coding_sheet_fields.forEach(function (f) {
-    codingSheetList.appendChild(renderCodingSheetField(f));
-  });
   state.effects.forEach(function (f) {
     effectsList.appendChild(renderEffectField(f, false));
-  });
-
-  document.getElementById("add-coding-sheet-field").addEventListener("click", function () {
-    var field = { name: "", type: "string", description: "" };
-    state.coding_sheet_fields.push(field);
-    codingSheetList.appendChild(renderCodingSheetField(field));
   });
 
   document.getElementById("add-effect-field").addEventListener("click", function () {

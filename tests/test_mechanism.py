@@ -1,6 +1,7 @@
 """Proves the row_id/locator mechanism (plan.md "Problem 2") without any API call:
-build_response_schema excludes coding_sheet_fields and encodes levels as enums;
-validate_response hard-rejects on any ID mismatch rather than trusting order.
+build_response_schema excludes the coding sheet's own columns and encodes levels
+as enums; validate_response hard-rejects on any ID mismatch rather than trusting
+order.
 """
 
 from meta_coder.manual import parse_coding_manual
@@ -11,9 +12,6 @@ MANUAL_YAML = """
 name: stroop_test
 effect_definition: >
   The difference in response times between compatible and incompatible trials.
-coding_sheet_fields:
-  authors: {type: string}
-  year: {type: integer}
 effects:
   Condition:
     type: string
@@ -31,11 +29,12 @@ def _manual():
     return parse_coding_manual(MANUAL_YAML)
 
 
-def test_build_response_schema_excludes_coding_sheet_fields():
+def test_build_response_schema_excludes_coding_sheet_columns():
     schema = build_response_schema(_manual())
     item_properties = schema["properties"]["effects"]["items"]["properties"]
     assert "authors" not in item_properties
     assert "year" not in item_properties
+    assert "locator" not in item_properties
     assert "row_id" in item_properties
     assert "Condition" in item_properties and "ResponseTimeMs" in item_properties
 

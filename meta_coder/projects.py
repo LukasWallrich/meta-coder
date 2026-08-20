@@ -178,3 +178,30 @@ def reset_manual_to_default(project: Project) -> None:
 
     shutil.copyfile(DEFAULT_MANUAL_PATH, project.manual_path)
     _reset_output(project)
+
+
+def clear_output(project: Project) -> None:
+    """Manage-tab action: delete all generated output (raw model JSON, per-PDF
+    audit YAML, coded_data.csv, evidence.csv) while keeping the manual, coding
+    sheet, and uploaded source PDFs untouched."""
+
+    _reset_output(project)
+
+
+def project_archive_files(project: Project) -> list[tuple[Path, str]]:
+    """Files to bundle for a full project download, as (absolute_path, arcname)
+    pairs — everything under the project directory except the internal
+    `.meta_coder` bookkeeping folder (project id/name/created_at, an
+    implementation detail, not project content)."""
+
+    if not project.path.is_dir():
+        return []
+    files: list[tuple[Path, str]] = []
+    for path in sorted(project.path.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(project.path)
+        if rel.parts and rel.parts[0] == ".meta_coder":
+            continue
+        files.append((path, str(rel)))
+    return files
