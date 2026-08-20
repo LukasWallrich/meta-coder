@@ -1,3 +1,51 @@
+// Theme toggle (System/Light/Dark). Mirrors the inline pre-paint script in
+// base.html so the two never disagree about resolution logic; this instance
+// also wires up the dropdown's click handlers and keeps them synced when the
+// OS preference changes while "System" is selected.
+(function () {
+  var THEME_KEY = "meta-coder-theme";
+  var systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+
+  function savedTheme() {
+    var value = "system";
+    try {
+      value = localStorage.getItem(THEME_KEY) || "system";
+    } catch (_) {
+      /* private browsing / storage disabled */
+    }
+    return ["system", "light", "dark"].indexOf(value) >= 0 ? value : "system";
+  }
+
+  function applyTheme(preference, persist) {
+    var resolved = preference === "system" ? (systemTheme.matches ? "dark" : "light") : preference;
+    document.documentElement.classList.toggle("dark", resolved === "dark");
+    document.documentElement.dataset.themePreference = preference;
+    document.documentElement.style.colorScheme = resolved;
+    if (persist) {
+      try {
+        localStorage.setItem(THEME_KEY, preference);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    document.querySelectorAll(".js-theme-option").forEach(function (option) {
+      option.setAttribute("aria-checked", option.dataset.themeValue === preference ? "true" : "false");
+    });
+  }
+
+  applyTheme(savedTheme(), false);
+  document.querySelectorAll(".js-theme-option").forEach(function (option) {
+    option.addEventListener("click", function () {
+      applyTheme(option.dataset.themeValue, true);
+    });
+  });
+  if (systemTheme.addEventListener) {
+    systemTheme.addEventListener("change", function () {
+      if (savedTheme() === "system") applyTheme("system", false);
+    });
+  }
+})();
+
 // Dropzone behavior for file inputs. Progressive enhancement: each dropzone is a
 // <label> wrapping a real <input type="file">, so click-to-browse works with no JS
 // at all. Choosing or dropping a file submits the zone's form immediately — no
@@ -37,7 +85,7 @@
       zone.addEventListener(evt, function (e) {
         e.preventDefault();
         e.stopPropagation();
-        zone.classList.add("border-primary", "bg-primary/5");
+        zone.classList.add("dragging");
       });
     });
 
@@ -45,7 +93,7 @@
       zone.addEventListener(evt, function (e) {
         e.preventDefault();
         e.stopPropagation();
-        zone.classList.remove("border-primary", "bg-primary/5");
+        zone.classList.remove("dragging");
       });
     });
 
@@ -184,16 +232,19 @@
       removeBtn.remove();
 
       var lockBadge = document.createElement("span");
-      lockBadge.className = "badge badge-ghost badge-sm ml-2";
+      lockBadge.className = "badge";
+      lockBadge.setAttribute("data-variant", "outline");
+      lockBadge.style.marginLeft = "var(--sp-2)";
       lockBadge.textContent = "auto";
       summaryType.insertAdjacentElement("afterend", lockBadge);
 
       var lockNote = document.createElement("p");
-      lockNote.className = "text-xs text-base-content/50 mt-2";
+      lockNote.className = "u-xs u-muted";
+      lockNote.style.marginTop = "var(--sp-2)";
       lockNote.textContent =
         "Added automatically to every coding manual — the model uses it to explain " +
         "any issues it had coding this row. Can't be edited or removed.";
-      block.querySelector(".collapse-content").appendChild(lockNote);
+      block.querySelector(".effect-field-body").appendChild(lockNote);
     } else {
       removeBtn.addEventListener("click", function (e) {
         e.preventDefault(); // inside a <summary> — don't toggle collapse on remove
@@ -256,9 +307,12 @@
     var draftStatus = document.getElementById("manual-draft-status");
     var drafting = false;
 
+    var DRAFT_STATUS_VARIANT = { info: "info", success: "success", error: "destructive" };
     function showDraftStatus(kind, message) {
       if (!draftStatus) return;
-      draftStatus.className = "alert alert-" + kind + " mt-2";
+      draftStatus.className = "alert";
+      draftStatus.setAttribute("data-variant", DRAFT_STATUS_VARIANT[kind] || kind);
+      draftStatus.style.marginTop = "var(--sp-2)";
       draftStatus.textContent = message;
     }
 
@@ -291,11 +345,15 @@
 
           var badge = document.getElementById("manual-status-badge");
           if (badge) {
-            badge.className = "badge badge-info";
+            badge.className = "badge";
+            badge.setAttribute("data-variant", "info");
             badge.textContent = "Draft · not saved";
           }
           var sidebarBadge = document.getElementById("manual-sidebar-status");
-          if (sidebarBadge) sidebarBadge.className = "badge badge-info badge-xs ml-auto";
+          if (sidebarBadge) {
+            sidebarBadge.className = "badge badge-dot";
+            sidebarBadge.setAttribute("data-variant", "info");
+          }
 
           var notice = document.getElementById("manual-draft-notice");
           if (notice) {
@@ -411,18 +469,22 @@ function initTabGroup(root, opts) {
   });
 
   var STATUS_BADGE = {
-    ok: '<span class="badge badge-success">ok</span>',
-    needs_review: '<span class="badge badge-warning">needs review</span>',
-    error: '<span class="badge badge-error">error</span>',
-    running: '<span class="badge badge-info">running</span>',
-    cancelled: '<span class="badge badge-ghost">cancelled</span>',
-    pending: '<span class="badge badge-ghost">pending</span>',
+    ok: '<span class="badge" data-variant="success">ok</span>',
+    needs_review: '<span class="badge" data-variant="warning">needs review</span>',
+    error: '<span class="badge" data-variant="destructive">error</span>',
+    running: '<span class="badge" data-variant="info">running</span>',
+    cancelled: '<span class="badge" data-variant="outline">cancelled</span>',
+    pending: '<span class="badge" data-variant="outline">pending</span>',
   };
 
   function applySnapshot(data) {
     if (bar) {
-      bar.max = data.total || 1;
-      bar.value = data.processed || 0;
+      var total = data.total || 1;
+      var processed = data.processed || 0;
+      var fill = bar.querySelector("span") || bar;
+      fill.style.width = Math.min(100, (processed / total) * 100) + "%";
+      bar.setAttribute("aria-valuemax", total);
+      bar.setAttribute("aria-valuenow", processed);
     }
     if (summary) {
       summary.textContent = data.processed + " / " + data.total + " PDFs processed — " + data.status;
@@ -476,30 +538,112 @@ function initTabGroup(root, opts) {
   setTimeout(poll, 1000);
 })();
 
+// PDF match-scan progress: same polling/reload-on-terminal shape as the run
+// progress bar above, but there's no per-row table to update — just the bar
+// and summary line — since the scan only feeds the (server-rendered) match
+// suggestions panel once it's done.
+(function () {
+  var root = document.getElementById("pdf-scan-progress");
+  if (!root || root.dataset.running !== "true") return;
+
+  var statusUrl = root.dataset.statusUrl;
+  var bar = root.querySelector("[data-progress-bar]");
+  var summary = root.querySelector("[data-progress-summary]");
+
+  function applySnapshot(data) {
+    if (bar) {
+      var total = data.total || 1;
+      var processed = data.processed || 0;
+      var fill = bar.querySelector("span") || bar;
+      fill.style.width = Math.min(100, (processed / total) * 100) + "%";
+      bar.setAttribute("aria-valuemax", total);
+      bar.setAttribute("aria-valuenow", processed);
+    }
+    if (summary) {
+      summary.textContent = "Scanning uploaded PDFs for matches — " + (data.processed || 0) + " / " + (data.total || 0);
+    }
+  }
+
+  function poll() {
+    fetch(statusUrl, { headers: { Accept: "application/json" } })
+      .then(function (res) {
+        return res.json();
+      })
+      .then(function (data) {
+        if (data.status === "running") {
+          applySnapshot(data);
+          setTimeout(poll, 1500);
+        } else {
+          window.location.reload();
+        }
+      })
+      .catch(function () {
+        setTimeout(poll, 3000); // transient fetch failure — keep trying
+      });
+  }
+
+  setTimeout(poll, 1000);
+})();
+
 (function () {
   var provider = document.getElementById("run-provider");
   if (!provider) return;
+  var model = document.getElementById("run-model");
+  var keyStatus = document.getElementById("run-key-status");
+  var defaults = {};
+  var statuses = {};
+  var labels = {};
+  var defaultsInput = document.getElementById("run-provider-defaults");
+  try {
+    if (keyStatus) {
+      statuses = JSON.parse(keyStatus.dataset.providerStatus || "{}");
+      labels = JSON.parse(keyStatus.dataset.providerLabels || "{}");
+    }
+    if (defaultsInput) defaults = JSON.parse(defaultsInput.textContent || "{}");
+  } catch (_) {
+    // The server still validates the provider and supplies its default on save.
+  }
 
-  function updateProviderSettings() {
+  function updateProviderSettings(resetModel) {
     document.querySelectorAll("[data-provider-setting]").forEach(function (setting) {
       setting.hidden = setting.getAttribute("data-provider-setting") !== provider.value;
     });
+    if (resetModel && model) model.value = defaults[provider.value] || "";
+
+    if (!keyStatus) return;
+    var status = statuses[provider.value] || "missing";
+    var label = labels[provider.value] || provider.value;
+    var message = keyStatus.querySelector("[data-run-key-message]");
+    var unlockForm = keyStatus.querySelector("[data-run-unlock-form]");
+    keyStatus.setAttribute("data-variant", status === "unlocked" ? "success" : "warning");
+    if (message) {
+      message.textContent = status === "unlocked"
+        ? label + " API key is set for this session."
+        : status === "locked"
+        ? "The saved " + label + " key is locked for this session."
+        : "No " + label + " API key set yet.";
+    }
+    if (unlockForm) {
+      unlockForm.hidden = status !== "locked";
+      var unlockProvider = unlockForm.querySelector('input[name="provider"]');
+      if (unlockProvider) unlockProvider.value = provider.value;
+    }
   }
 
-  provider.addEventListener("change", updateProviderSettings);
-  updateProviderSettings();
+  provider.addEventListener("change", function () { updateProviderSettings(true); });
+  updateProviderSettings(false);
 })();
 
 (function () {
   var tabRoot = document.getElementById("tab-root");
   if (tabRoot) {
-    // Sidebar-level tabs survive this app's full-page-reload actions (form
+    // Top-level tabs survive this app's full-page-reload actions (form
     // submits, the in-progress-run auto-refresh) without any server plumbing —
     // remembered per project so switching projects doesn't leak the tab choice.
     initTabGroup(tabRoot, {
       linkAttr: "data-tab-link",
       panelAttr: "data-tab-panel",
-      activeClass: "menu-active",
+      activeClass: "is-active",
       storageKey: "metaCoderActiveTab:" + (tabRoot.dataset.projectId || "default"),
       forceTab: tabRoot.dataset.forceTab,
     });
@@ -510,8 +654,30 @@ function initTabGroup(root, opts) {
     initTabGroup(manualSubtabs, {
       linkAttr: "data-subtab-link",
       panelAttr: "data-subtab-panel",
-      activeClass: "tab-active",
+      activeClass: "is-active",
       storageKey: "metaCoderManualSubtab:" + (tabRoot ? tabRoot.dataset.projectId : "default"),
     });
   }
+
+  var identifySubtabs = document.getElementById("identify-subtabs");
+  if (identifySubtabs) {
+    initTabGroup(identifySubtabs, {
+      linkAttr: "data-subtab-link",
+      panelAttr: "data-subtab-panel",
+      activeClass: "is-active",
+      storageKey: "metaCoderIdentifySubtab:" + (tabRoot ? tabRoot.dataset.projectId : "default"),
+    });
+  }
+
+  // Cross-references from one tab's content to another (e.g. the coding
+  // sheet's "see the PDF identification tab" notice) — clicks the matching
+  // top-level tab button so its own listener (registered above) does the
+  // actual switch.
+  document.addEventListener("click", function (e) {
+    var jump = e.target.closest("[data-tab-jump]");
+    if (!jump) return;
+    e.preventDefault();
+    var target = document.querySelector('[data-tab-link="' + jump.getAttribute("data-tab-jump") + '"]');
+    if (target) target.click();
+  });
 })();

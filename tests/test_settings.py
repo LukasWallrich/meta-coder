@@ -47,7 +47,12 @@ def test_unknown_provider_falls_back_to_default_provider_and_model():
 def test_blank_model_falls_back_to_the_selected_providers_default():
     settings = RunSettings(provider="openrouter", model="").clamped()
     assert settings.provider == "openrouter"
-    assert settings.model == "openai/gpt-4o-mini"
+    assert settings.model == "google/gemini-3.7-flash"
+
+
+def test_provider_defaults_are_the_expected_gemini_models():
+    assert RunSettings(provider="gemini", model="").clamped().model == "gemini-3.7-flash"
+    assert RunSettings(provider="openrouter", model="").clamped().model == "google/gemini-3.7-flash"
 
 
 def test_zero_timeout_falls_back_to_the_providers_default_timeout():

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from html import escape
 import json
+import re
 import secrets
 import socket
 import subprocess
@@ -15,13 +17,25 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import credentials
 from .app_settings import AppSettings, load_app_settings, save_app_settings
-from .coding_sheet import read_coding_sheet
+from .coding_sheet import coding_sheet_template_csv, read_coding_sheet
+from .pdf_matching import (
+    PdfScanner,
+    apply_source_pdf_matches,
+    cached_signal,
+    load_match_score_cache,
+    load_signal_cache,
+    matched_paper_ids,
+    save_match_score_cache,
+    suggest_matches_from_score_cache,
+    unmatched_paper_ids,
+)
 from .extraction import ProviderError
 from .manual import (
     ManualError,
@@ -44,11 +58,12 @@ from .projects import (
     reset_manual_to_default,
     write_manual,
 )
-from .providers import PROVIDER_LABELS, PROVIDERS, check_model, draft_coding_manual
-from .runner import Runner, raw_json_path
+from .providers import PROVIDER_LABELS, PROVIDERS, check_model, default_model, draft_coding_manual
+from .runner import Runner, load_persisted_results, raw_json_path
 from .settings import REASONING_EFFORTS, RunSettings, load_run_settings, save_run_settings
 from .uploads import ProjectError as UploadProjectError  # re-export alias, same type
 from .uploads import list_uploaded_pdfs, save_pdf_upload
+import yaml
 
 
 def _embeddable_json(data: object) -> str:
@@ -59,23 +74,51 @@ def _embeddable_json(data: object) -> str:
     return json.dumps(data).replace("<", "\\u003c")
 
 
-RUN_PAGE_SIZE = 25
+_YAML_KEY_LINE = re.compile(r"^(\s*(?:-\s+)?)([^:#][^:]*)(:)(.*)$")
+
+
+def _highlight_yaml(text: str) -> Markup:
+    """Render locally generated YAML safely with lightweight, dependency-free syntax colour."""
+
+    rendered = []
+    for line in text.splitlines():
+        match = _YAML_KEY_LINE.match(line)
+        if not match:
+            rendered.append(escape(line))
+            continue
+        indent, key, colon, value = match.groups()
+        value_html = escape(value)
+        if " #" in value_html:
+            scalar, comment = value_html.split(" #", 1)
+            value_html = f'<span class="yaml-scalar">{scalar}</span> <span class="yaml-comment">#{comment}</span>'
+        elif value_html:
+            value_html = f'<span class="yaml-scalar">{value_html}</span>'
+        rendered.append(
+            f'{escape(indent)}<span class="yaml-key">{escape(key)}</span>{colon}{value_html}'
+        )
+    return Markup("\n".join(rendered))
+
+
+PAGE_SIZE = 20
 RUN_SORT_COLUMNS = {"source_pdf", "authors", "year", "status", "input_tokens", "output_tokens"}
 
 
 RETRYABLE_STATUSES = {"error", "needs_review", "cancelled"}
 
 
-def _run_table_rows(run_state, coding_sheet, project: Project) -> list[dict]:
-    """One row per article/PDF being processed, joined with its paper-identification
-    columns from the coding sheet (its first row, if it has several effect rows)."""
+def _run_table_rows(results, coding_sheet, project: Project) -> list[dict]:
+    """One row per processed article, joined with its paper-identification columns.
+
+    ``results`` may be the in-memory progress entries during a run or persisted
+    extraction results after a restart. Both represent the same result fields.
+    """
 
     first_row_by_pdf = {}
     for row in coding_sheet.rows:
         first_row_by_pdf.setdefault(row.source_pdf, row)
 
     rows = []
-    for pdf in run_state.pdfs:
+    for pdf in results:
         sheet_row = first_row_by_pdf.get(pdf.source_pdf)
         raw_path = raw_json_path(project, pdf.source_pdf)
         rows.append(
@@ -89,7 +132,8 @@ def _run_table_rows(run_state, coding_sheet, project: Project) -> list[dict]:
                 "extra_ids": pdf.extra_ids,
                 "input_tokens": pdf.input_tokens,
                 "output_tokens": pdf.output_tokens,
-                "json_repaired": pdf.json_repaired,
+                "json_repaired": getattr(pdf, "json_repaired", False)
+                or getattr(pdf, "repaired_response", None) is not None,
                 "raw_available": raw_path.is_file(),
                 "raw_filename": raw_path.name,
                 "retryable": pdf.status in RETRYABLE_STATUSES,
@@ -114,7 +158,7 @@ def _sort_run_rows(rows: list[dict], sort_key: str | None, direction: str | None
     return sorted(rows, key=sort_value, reverse=(direction == "desc"))
 
 
-def _paginate(rows: list[dict], page: int, *, page_size: int = RUN_PAGE_SIZE):
+def _paginate(rows: list, page: int, *, page_size: int = PAGE_SIZE):
     total = len(rows)
     total_pages = max(1, -(-total // page_size))  # ceil division
     page = max(1, min(page or 1, total_pages))
@@ -152,6 +196,7 @@ class Runtime:
     def __init__(self, projects_root: Path | None = None) -> None:
         self.projects_root = projects_root
         self.runner = Runner()
+        self.pdf_scanner = PdfScanner()
         self._session_keys: dict[str, str] = {}
         self._saved_keys: set[str] = {
             provider for provider in PROVIDERS if credentials.saved_key_configured(provider)
@@ -205,6 +250,11 @@ def _project_view(
     run_sort: str | None = None,
     run_dir: str | None = None,
     run_page: int = 1,
+    id_issues_page: int = 1,
+    id_matches_page: int = 1,
+    id_saved_page: int = 1,
+    id_orphans_page: int = 1,
+    sources_page: int = 1,
 ) -> dict:
     """Everything the project page template needs, recomputed fresh on every
     render — including coding-sheet validation, which must reflect the CURRENT
@@ -244,16 +294,117 @@ def _project_view(
     run_settings = load_run_settings(project)
     app_settings = load_app_settings()
     generator_provider = app_settings.manual_generator_provider
+
+    # Only worth matching when there's actually an unmatched (or blank)
+    # source_pdf to help with — the common case, once a project is set up, is
+    # none. unmatched_paper_ids is the source of truth for "is there anything
+    # to suggest a match for" (not coding_sheet.issues' message text — a row
+    # can need a suggestion via title/DOI/authors+year even with no
+    # source_pdf at all, which is a different issue message).
+    #
+    # Parsing a PDF for its match signal (full-document text extraction) is
+    # too slow to do inline on every page render, so this only ever reads
+    # `PdfScanner`'s on-disk cache (see pdf_matching.py). Any orphan not yet
+    # in the cache — freshly uploaded, or a project from before this cache
+    # existed — is handed to a background scan instead of parsed here; the
+    # page renders a scanning progress bar in its place until the cache
+    # catches up.
+    sheet_text = (
+        project.coding_sheet_path.read_text(encoding="utf-8")
+        if project.coding_sheet_path.is_file()
+        else ""
+    )
+    unmatched_papers = unmatched_paper_ids(sheet_text, uploaded_filenames=uploaded_names)
+    matched_papers = matched_paper_ids(sheet_text, uploaded_filenames=uploaded_names)
+    pdf_match_suggestions = []
+    signal_cache = load_signal_cache(project)
+    if unmatched_papers:
+        orphan_paths = [p for p in uploaded if p.name in orphan_pdfs]
+        unscanned = [
+            p
+            for p in orphan_paths
+            if cached_signal(p, signal_cache, grobid_url=app_settings.grobid_url) is None
+        ]
+        if unscanned:
+            # Fixed True here rather than re-reading `is_running` after
+            # kicking off the scan: a fast scan can finish between starting
+            # it and checking, which would otherwise render neither the
+            # progress bar nor the (not-yet-available) suggestions panel —
+            # leaving the user with nothing to look at until they refresh.
+            pdf_scanning = True
+            runtime.pdf_scanner.scan_async(project, unscanned, grobid_url=app_settings.grobid_url)
+        else:
+            pdf_scanning = False
+            # Pairwise scores are cached independently, so accepting a match
+            # only filters the current score matrix. Fuzzy matching runs again
+            # only for a paper/PDF signal pair not seen before.
+            score_cache = load_match_score_cache(project)
+            pdf_match_suggestions, score_cache_changed = suggest_matches_from_score_cache(
+                unmatched_papers,
+                orphan_paths,
+                signal_cache=signal_cache,
+                grobid_url=app_settings.grobid_url,
+                score_cache=score_cache,
+            )
+            if score_cache_changed:
+                save_match_score_cache(project, score_cache)
+    else:
+        pdf_scanning = False
+
+    # Each of these four lists paginates independently (distinct query
+    # params) so paging one doesn't reset the others.
+    id_issues_page_rows, id_issues_page, id_issues_total_pages = _paginate(
+        coding_sheet.pdf_issues, id_issues_page
+    )
+    id_matches_page_rows, id_matches_page, id_matches_total_pages = _paginate(
+        pdf_match_suggestions, id_matches_page
+    )
+    id_saved_page_rows, id_saved_page, id_saved_total_pages = _paginate(matched_papers, id_saved_page)
+    id_orphans_page_rows, id_orphans_page, id_orphans_total_pages = _paginate(
+        orphan_pdfs, id_orphans_page
+    )
+    sources_page_rows, sources_page, sources_total_pages = _paginate(uploaded, sources_page)
+
+    pdf_scan_state = runtime.pdf_scanner.state(project.project_id)
     api_key_set = bool(runtime.api_key(run_settings.provider))
     saved_key_available = runtime.has_saved_key(run_settings.provider)
+    provider_key_status = {
+        provider: (
+            "unlocked"
+            if runtime.api_key(provider)
+            else "locked"
+            if runtime.has_saved_key(provider)
+            else "missing"
+        )
+        for provider in PROVIDERS
+    }
     keyring_available = credentials.keyring_available()
+
+    persisted_results = load_persisted_results(project)
+    completed_pdf_names = {
+        source_pdf for source_pdf, result in persisted_results.items() if result.status == "ok"
+    }
+    matched_pdf_names = {row.source_pdf for row in coding_sheet.rows}
+    pending_pdf_names = matched_pdf_names - completed_pdf_names
+    first_row_by_pdf = {}
+    for row in coding_sheet.rows:
+        first_row_by_pdf.setdefault(row.source_pdf, row)
+    completed_articles = [
+        {
+            "source_pdf": source_pdf,
+            "authors": first_row_by_pdf.get(source_pdf).authors if source_pdf in first_row_by_pdf else "",
+            "year": first_row_by_pdf.get(source_pdf).year if source_pdf in first_row_by_pdf else "",
+        }
+        for source_pdf in sorted(completed_pdf_names)
+    ]
 
     can_run = bool(
         api_key_set
         and manual is not None
         and manual.is_complete
-        and coding_sheet.is_valid
+        and not coding_sheet.sheet_issues
         and coding_sheet.rows
+        and pending_pdf_names
         and not is_running
     )
 
@@ -263,16 +414,22 @@ def _project_view(
 
     run_sort = run_sort if run_sort in RUN_SORT_COLUMNS else "source_pdf"
     run_dir = run_dir if run_dir in ("asc", "desc") else "asc"
-    run_rows_all = _run_table_rows(run_state, coding_sheet, project) if run_state else []
+    table_results = dict(persisted_results)
+    if run_state:
+        # A retry's in-memory state includes only its target PDFs. Overlay it
+        # on the persisted history rather than hiding earlier outcomes.
+        table_results.update({progress.source_pdf: progress for progress in run_state.pdfs})
+    run_rows_all = _run_table_rows(table_results.values(), coding_sheet, project)
     run_rows_sorted = _sort_run_rows(run_rows_all, run_sort, run_dir)
     run_rows_page, run_page, run_total_pages = _paginate(run_rows_sorted, run_page)
+    failed_result_count = sum(row["status"] == "error" for row in run_rows_all)
     can_retry = bool(
         run_state
         and not is_running
         and api_key_set
         and manual is not None
         and manual.is_complete
-        and coding_sheet.is_valid
+        and not coding_sheet.sheet_issues
         and any(row["retryable"] for row in run_rows_all)
     )
 
@@ -282,19 +439,46 @@ def _project_view(
         "manual": manual,
         "manual_error": manual_error,
         "manual_editor_json": manual_editor_json,
-        "uploaded_pdfs": uploaded,
+        "uploaded_pdfs": sources_page_rows,
+        "uploaded_pdfs_count": len(uploaded),
+        "sources_page": sources_page,
+        "sources_total_pages": sources_total_pages,
         "coding_sheet": coding_sheet,
-        "orphan_pdfs": orphan_pdfs,
+        "orphan_pdfs": id_orphans_page_rows,
+        "orphan_pdfs_count": len(orphan_pdfs),
+        "id_orphans_page": id_orphans_page,
+        "id_orphans_total_pages": id_orphans_total_pages,
+        "pdf_issues": id_issues_page_rows,
+        "pdf_issues_count": len(coding_sheet.pdf_issues),
+        "id_issues_page": id_issues_page,
+        "id_issues_total_pages": id_issues_total_pages,
+        "pdf_match_suggestions": id_matches_page_rows,
+        "pdf_match_suggestions_count": len(pdf_match_suggestions),
+        "id_matches_page": id_matches_page,
+        "id_matches_total_pages": id_matches_total_pages,
+        "matched_papers": id_saved_page_rows,
+        "matched_papers_count": len(matched_papers),
+        "id_saved_page": id_saved_page,
+        "id_saved_total_pages": id_saved_total_pages,
+        "pdf_scanning": pdf_scanning,
+        "pdf_scan_state": pdf_scan_state,
         "run_state": run_state,
         "is_running": is_running,
         "can_run": can_run,
+        "matched_pdf_count": len(matched_pdf_names),
+        "pending_pdf_count": len(pending_pdf_names),
+        "completed_articles": completed_articles,
+        "failed_result_count": failed_result_count,
         "api_key_set": api_key_set,
         "saved_key_available": saved_key_available,
+        "provider_key_status": provider_key_status,
+        "provider_default_models": {provider: default_model(provider) for provider in PROVIDERS},
         "keyring_available": keyring_available,
         "providers": PROVIDERS,
         "provider_labels": PROVIDER_LABELS,
         "reasoning_efforts": REASONING_EFFORTS,
-        "has_results": coded_csv.is_file() and evidence_csv.is_file(),
+        "has_results": bool(run_state) or bool(completed_articles) or (coded_csv.is_file() and evidence_csv.is_file()),
+        "result_files_available": coded_csv.is_file() and evidence_csv.is_file(),
         "audit_files": audit_files,
         "run_settings": run_settings,
         "manual_generator_provider": generator_provider,
@@ -323,7 +507,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             "MetaCoder is running. Use the URL printed in your terminal.", status_code=404
         )
 
-    @app.get(f"/{token}/static/{{filename}}", include_in_schema=False)
+    @app.get(f"/{token}/static/{{filename:path}}", include_in_schema=False)
     async def static_file(filename: str):
         path = (STATIC_DIR / filename).resolve()
         try:
@@ -333,6 +517,14 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Not found.")
         return FileResponse(path)
+
+    @app.get(f"/{token}/coding-sheet-template.csv", include_in_schema=False)
+    async def download_coding_sheet_template():
+        return PlainTextResponse(
+            coding_sheet_template_csv(),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="coding-sheet-template.csv"'},
+        )
 
     @app.get(f"/{token}/", response_class=HTMLResponse)
     async def home(request: Request):
@@ -418,6 +610,11 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         run_sort: str | None = None,
         run_dir: str | None = None,
         run_page: int = 1,
+        id_issues_page: int = 1,
+        id_matches_page: int = 1,
+        id_saved_page: int = 1,
+        id_orphans_page: int = 1,
+        sources_page: int = 1,
     ):
         try:
             project = runtime.project(project_id)
@@ -432,7 +629,18 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             "error": error,
             "warning": warning,
             "force_tab": tab or ("sources" if error else None),
-            **_project_view(runtime, project, run_sort=run_sort, run_dir=run_dir, run_page=run_page),
+            **_project_view(
+                runtime,
+                project,
+                run_sort=run_sort,
+                run_dir=run_dir,
+                run_page=run_page,
+                id_issues_page=id_issues_page,
+                id_matches_page=id_matches_page,
+                id_saved_page=id_saved_page,
+                id_orphans_page=id_orphans_page,
+                sources_page=sources_page,
+            ),
         }
         return TEMPLATES.TemplateResponse(request, "project.html", context)
 
@@ -491,11 +699,12 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         return RedirectResponse(f"/{token}/settings", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/run/unlock")
-    async def unlock_project_run_key(project_id: str):
+    async def unlock_project_run_key(project_id: str, provider: str = Form(...)):
         project = runtime.project(project_id)
-        settings = load_run_settings(project)
+        if provider not in PROVIDERS:
+            raise HTTPException(status_code=400, detail="Unknown provider.")
         try:
-            unlocked = runtime.unlock_key(settings.provider)
+            unlocked = runtime.unlock_key(provider)
         except credentials.CredentialStoreError as exc:
             return RedirectResponse(
                 f"/{token}/projects/{project_id}?tab=run&error={quote(str(exc))}", status_code=303
@@ -505,6 +714,22 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             return RedirectResponse(
                 f"/{token}/projects/{project_id}?tab=run&error={quote(message)}", status_code=303
             )
+        settings = load_run_settings(project)
+        if settings.provider != provider:
+            # Unlocking from the provider picker confirms the user's switch.
+            # Persist it so the reload, model default, and next run all agree.
+            save_run_settings(
+                project,
+                RunSettings(
+                    provider=provider,
+                    model="",
+                    parallel_requests=settings.parallel_requests,
+                    request_delay_sec=settings.request_delay_sec,
+                    request_timeout_sec=settings.request_timeout_sec,
+                    service_tier=settings.service_tier,
+                    reasoning_effort=settings.reasoning_effort,
+                ),
+            )
         return RedirectResponse(f"/{token}/projects/{project_id}?tab=run", status_code=303)
 
     @app.post(f"/{token}/settings/app")
@@ -512,12 +737,14 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         upload_size_cap_mb: int = Form(...),
         manual_generator_provider: str = Form(...),
         manual_generator_model: str = Form(""),
+        grobid_url: str = Form(""),
     ):
         save_app_settings(
             AppSettings(
                 upload_size_cap_mb=upload_size_cap_mb,
                 manual_generator_provider=manual_generator_provider,
                 manual_generator_model=manual_generator_model,
+                grobid_url=grobid_url,
             )
         )
         return RedirectResponse(f"/{token}/settings", status_code=303)
@@ -526,6 +753,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
     async def save_project_settings(
         project_id: str,
         provider: str = Form(...),
+        previous_provider: str = Form(""),
         model: str = Form(""),
         parallel_requests: int = Form(1),
         request_delay_sec: int = Form(0),
@@ -536,7 +764,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         project = runtime.project(project_id)
         settings = RunSettings(
             provider=provider,
-            model=model,
+            model="" if provider != previous_provider else model,
             parallel_requests=parallel_requests,
             request_delay_sec=request_delay_sec,
             request_timeout_sec=request_timeout_sec,
@@ -658,16 +886,53 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         project.coding_sheet_path.write_text(raw.decode("utf-8", errors="replace"), encoding="utf-8")
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
+    @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/match-pdfs")
+    async def match_coding_sheet_pdfs(request: Request, project_id: str):
+        project = runtime.project(project_id)
+        form = await request.form()
+        paper_keys = form.getlist("paper_key")
+        filenames = form.getlist("filename")
+        uploaded_filenames = {path.name for path in list_uploaded_pdfs(project.sources_dir)}
+        mapping = {
+            paper_key: filename
+            for paper_key, filename in zip(paper_keys, filenames)
+            if paper_key and filename in uploaded_filenames
+        }
+        save_key = form.get("save_key")
+        if save_key:
+            mapping = {save_key: mapping[save_key]} if save_key in mapping else {}
+        if mapping and project.coding_sheet_path.is_file():
+            apply_source_pdf_matches(project.coding_sheet_path, mapping)
+        return RedirectResponse(f"/{token}/projects/{project_id}?tab=identify", status_code=303)
+
+    @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/unmatch-pdf")
+    async def unmatch_coding_sheet_pdf(project_id: str, source_pdf: str = Form(...)):
+        project = runtime.project(project_id)
+        uploaded_filenames = {path.name for path in list_uploaded_pdfs(project.sources_dir)}
+        if source_pdf in uploaded_filenames and project.coding_sheet_path.is_file():
+            apply_source_pdf_matches(project.coding_sheet_path, {source_pdf: ""})
+        return RedirectResponse(f"/{token}/projects/{project_id}?tab=identify", status_code=303)
+
     @app.post(f"/{token}/projects/{{project_id}}/uploads")
     async def upload_pdfs(project_id: str, files: list[UploadFile] = File(...)):
         project = runtime.project(project_id)
-        max_bytes = load_app_settings().upload_size_cap_bytes
+        app_settings = load_app_settings()
         errors = []
+        saved: list[Path] = []
         for upload in files:
             try:
-                save_pdf_upload(project.sources_dir, upload.filename or "", upload.file, max_bytes=max_bytes)
+                saved.append(
+                    save_pdf_upload(
+                        project.sources_dir,
+                        upload.filename or "",
+                        upload.file,
+                        max_bytes=app_settings.upload_size_cap_bytes,
+                    )
+                )
             except UploadProjectError as exc:
                 errors.append(str(exc))
+        if saved:
+            runtime.pdf_scanner.scan_async(project, saved, grobid_url=app_settings.grobid_url)
         if errors:
             return RedirectResponse(
                 f"/{token}/projects/{project_id}?error={quote('; '.join(errors))}", status_code=303
@@ -697,10 +962,12 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 )
             if view["manual_error"]:
                 reasons.append("the coding manual has a validation error")
-            if not view["coding_sheet"].is_valid:
+            if view["coding_sheet"].sheet_issues:
                 reasons.append("the coding sheet has validation errors")
             elif not view["coding_sheet"].rows:
-                reasons.append("the coding sheet has no rows")
+                reasons.append("the coding sheet has no matched rows")
+            elif not view["pending_pdf_count"]:
+                reasons.append("all matched PDFs were already coded")
             if runtime.runner.is_running(project_id):
                 reasons.append("a run is already in progress")
             raise HTTPException(status_code=400, detail="Cannot run: " + "; ".join(reasons) + ".")
@@ -741,7 +1008,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             )
         if view["manual_error"] or view["manual"] is None or not view["manual"].is_complete:
             raise HTTPException(status_code=400, detail="Fix the coding manual before retrying.")
-        if not view["coding_sheet"].is_valid:
+        if view["coding_sheet"].sheet_issues:
             raise HTTPException(status_code=400, detail="Fix the coding sheet before retrying.")
 
         if source_pdf:
@@ -783,6 +1050,14 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             return {"status": "idle"}
         return state.snapshot()
 
+    @app.get(f"/{token}/projects/{{project_id}}/pdf-scan/status")
+    async def pdf_scan_status(project_id: str):
+        runtime.project(project_id)
+        state = runtime.pdf_scanner.state(project_id)
+        if state is None:
+            return {"status": "idle", "total": 0, "processed": 0}
+        return state.snapshot()
+
     @app.get(f"/{token}/projects/{{project_id}}/raw/{{filename}}")
     async def view_raw_response(project_id: str, filename: str):
         project = runtime.project(project_id)
@@ -794,9 +1069,16 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Not found.")
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Not found.")
-        # text/plain (not application/json) so it renders inline in the browser
-        # for quick inspection, matching view_audit's approach below.
-        return FileResponse(path, media_type="text/plain")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            yaml_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
+        except (OSError, json.JSONDecodeError, yaml.YAMLError):
+            raise HTTPException(status_code=422, detail="The stored raw response is unreadable.")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "raw_response.html",
+            {"token": token, "project": project, "raw_yaml": _highlight_yaml(yaml_text)},
+        )
 
     @app.get(f"/{token}/projects/{{project_id}}/download/coded")
     async def download_coded(project_id: str):

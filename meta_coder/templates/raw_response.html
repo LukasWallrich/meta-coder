@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Raw output · {{ project.name }} · MetaCoder{% endblock %}
+{% block content %}
+<div class="page">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <ol><li><a href="/{{ token }}/projects/{{ project.project_id }}?tab=results">{{ project.name }} results</a></li><li aria-current="page">Raw output</li></ol>
+  </nav>
+  <div class="page-head"><div><h1>Raw model output</h1><p>Stored response, formatted as YAML for inspection.</p></div></div>
+  <pre class="raw-yaml" aria-label="Raw model output as YAML">{{ raw_yaml }}</pre>
+</div>
+{% endblock %}

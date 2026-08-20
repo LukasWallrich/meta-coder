@@ -46,7 +46,7 @@ def _read_bounded(stream: BinaryIO, *, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _pdf_text(data: bytes) -> str:
+def pdf_text(data: bytes) -> str:
     if not data.startswith(b"%PDF"):
         raise ManualDraftError("The uploaded file is not a valid PDF.")
     try:
@@ -93,7 +93,7 @@ def extract_manual_document_text(
     if suffix not in SUPPORTED_DOCUMENT_SUFFIXES:
         raise ManualDraftError("Upload a PDF or DOCX coding-manual document.")
     data = _read_bounded(stream, max_bytes=max_bytes)
-    text = _pdf_text(data) if suffix == ".pdf" else _docx_text(data)
+    text = pdf_text(data) if suffix == ".pdf" else _docx_text(data)
     text = text.strip()
     if not text:
         raise ManualDraftError(

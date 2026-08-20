@@ -40,6 +40,32 @@ def audit_yaml_path(project: Project, source_pdf: str) -> Path:
     return project.audit_dir / f"{_safe_stem(source_pdf)}.yaml"
 
 
+def write_raw_result(project: Project, result: ExtractionResult, *, provider: str, model: str) -> None:
+    """Persist every completed attempt, including provider failures, for retries and review."""
+
+    raw_json_path(project, result.source_pdf).write_text(
+        json.dumps(
+            {
+                "source_pdf": result.source_pdf,
+                "provider": provider,
+                "model": model,
+                "status": result.status,
+                "error": result.error,
+                "coded_by_row_id": result.coded_by_row_id,
+                "missing_ids": sorted(result.missing_ids),
+                "extra_ids": sorted(result.extra_ids),
+                "raw_response": result.raw_response,
+                "repaired_response": result.repaired_response,
+                "duration_sec": result.duration_sec,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _result_from_raw_json(path: Path) -> ExtractionResult | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -62,7 +88,7 @@ def _result_from_raw_json(path: Path) -> ExtractionResult | None:
     )
 
 
-def _load_existing_results(project: Project) -> dict[str, ExtractionResult]:
+def load_persisted_results(project: Project) -> dict[str, ExtractionResult]:
     """Rehydrate prior attempts from `output/raw/*.json` so a partial run (a
     retry of just a few PDFs, or a cancelled run resumed later) doesn't
     overwrite `coded_data.csv`/`evidence.csv` with blank rows for every PDF
@@ -205,9 +231,17 @@ class Runner:
             wanted = set(only_pdfs)
             pdf_names = [name for name in all_pdf_names if name in wanted]
         else:
-            pdf_names = all_pdf_names
+            prior_results = load_persisted_results(project)
+            # A normal run is resumable: a successfully coded PDF is durable
+            # in output/raw and is never sent to the provider again. Explicit
+            # retries intentionally bypass this filter.
+            pdf_names = [
+                name
+                for name in all_pdf_names
+                if name not in prior_results or prior_results[name].status != "ok"
+            ]
         if not pdf_names:
-            raise RuntimeError("No matching PDFs to run.")
+            raise RuntimeError("No matched PDFs still need coding.")
 
         state = RunState(
             status="running",
@@ -258,7 +292,7 @@ class Runner:
         # — a retry of a few PDFs, or a run cancelled midway — upserts over the
         # existing record instead of collating as if every other PDF was never
         # processed.
-        results_by_pdf: dict[str, ExtractionResult] = _load_existing_results(project)
+        results_by_pdf: dict[str, ExtractionResult] = load_persisted_results(project)
         results_lock = threading.Lock()
         pacer = _RequestPacer(request_delay_sec)
         provider_kwargs: dict[str, object] = {}
@@ -294,27 +328,7 @@ class Runner:
                     **provider_kwargs,
                     cancel_event=state.cancel_event,
                 )
-                raw_json_path(project, progress.source_pdf).write_text(
-                    json.dumps(
-                        {
-                            "source_pdf": result.source_pdf,
-                            "provider": provider,
-                            "model": model,
-                            "status": result.status,
-                            "error": result.error,
-                            "coded_by_row_id": result.coded_by_row_id,
-                            "missing_ids": sorted(result.missing_ids),
-                            "extra_ids": sorted(result.extra_ids),
-                            "raw_response": result.raw_response,
-                            "repaired_response": result.repaired_response,
-                            "duration_sec": result.duration_sec,
-                            "input_tokens": result.input_tokens,
-                            "output_tokens": result.output_tokens,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
+                write_raw_result(project, result, provider=provider, model=model)
                 audit_yaml_path(project, progress.source_pdf).write_text(
                     render_pdf_audit_yaml(
                         manual=manual, source_pdf=progress.source_pdf, rows=rows, result=result
@@ -327,6 +341,12 @@ class Runner:
                 result = ExtractionResult(
                     source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {exc}"
                 )
+                try:
+                    write_raw_result(project, result, provider=provider, model=model)
+                except OSError:
+                    # The original failure still appears in this run's state;
+                    # a storage failure simply cannot survive a restart.
+                    pass
 
             with results_lock:
                 results_by_pdf[progress.source_pdf] = result

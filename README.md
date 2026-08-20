@@ -63,12 +63,11 @@ A few other things worth knowing while developing:
   ```sh
   META_CODER_HOME=/tmp/meta-coder-dev pixi run start
   ```
-- **Frontend changes.** Templates (`meta_coder/templates/`) and
-  `meta_coder/static/app.js` are server-rendered/served directly — edits show
-  up on the next page load, no build step. `meta_coder/static/app.css` is a
-  compiled Tailwind v4/daisyUI bundle checked into the repo; see
-  `build-css/README.md` if you change template classes and need to regenerate
-  it (that's the one place Node is involved, and only at dev time).
+- **Frontend changes.** Templates (`meta_coder/templates/`), `meta_coder/static/app.js`,
+  and `meta_coder/static/app.css` are hand-authored and served directly —
+  edits show up on the next page load, no build step. `meta_coder/static/vendor/`
+  holds a vendored copy of [Basecoat](https://basecoatui.com/), the component
+  library the app's CSS is built on.
 - **Building a release bundle locally**, e.g. to test `scripts/install.sh`
   end-to-end without a real host: `scripts/build_release.sh` archives a git
   ref (default `HEAD`) into `dist/meta-coder-<version>.tar.gz` — see
@@ -171,6 +170,7 @@ work without killing an in-flight request.
 
 ## Frontend
 
-Server-rendered Jinja templates styled with daisyUI (Tailwind v4 plugin). No Node at
-install or launch — `meta_coder/static/app.css` is a compiled bundle checked into the
-repo. See `build-css/README.md` if you change templates and need to regenerate it.
+Server-rendered Jinja templates styled with [Basecoat](https://basecoatui.com/), a
+vendored CSS/JS component library (`meta_coder/static/vendor/`) with a hand-authored
+`app.css` on top for page-level layout and a blue color scheme. No Node at install or
+launch, and nothing to compile — every frontend file is checked into the repo as-is.

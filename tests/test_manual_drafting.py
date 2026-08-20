@@ -1,9 +1,9 @@
 from io import BytesIO
-from pathlib import Path
 
 import pytest
 from docx import Document
 
+import meta_coder.manual_drafting as manual_drafting
 from meta_coder.manual_drafting import (
     ManualDraftError,
     build_manual_draft_prompt,
@@ -30,10 +30,17 @@ def test_extracts_text_and_tables_from_docx_manual():
     assert "Mean age of participants" in text
 
 
-def test_extracts_page_marked_text_from_pdf():
-    path = Path("sample_materials/Ambrosecchia 2015.pdf")
-    with path.open("rb") as stream:
-        text = extract_manual_document_text(stream, path.name, max_bytes=20 * 1024 * 1024)
+def test_extracts_page_marked_text_from_pdf(monkeypatch):
+    class Page:
+        def extract_text(self):
+            return "ORIGINAL RESEARCH"
+
+    class Reader:
+        is_encrypted = False
+        pages = [Page()]
+
+    monkeypatch.setattr(manual_drafting, "PdfReader", lambda _stream: Reader())
+    text = extract_manual_document_text(BytesIO(b"%PDF-synthetic"), "manual.pdf", max_bytes=1024)
 
     assert text.startswith("[Page 1]")
     assert "ORIGINAL RESEARCH" in text

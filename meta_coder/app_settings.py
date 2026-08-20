@@ -24,6 +24,7 @@ class AppSettings:
     upload_size_cap_mb: int = DEFAULT_UPLOAD_SIZE_CAP_MB
     manual_generator_provider: str = DEFAULT_PROVIDER
     manual_generator_model: str = ""
+    grobid_url: str = ""
 
     def clamped(self) -> "AppSettings":
         provider = (
@@ -38,6 +39,7 @@ class AppSettings:
             manual_generator_provider=provider,
             manual_generator_model=(self.manual_generator_model or "").strip()
             or default_model(provider),
+            grobid_url=(self.grobid_url or "").strip(),
         )
 
     @property
@@ -63,6 +65,7 @@ def load_app_settings() -> AppSettings:
                 raw.get("manual_generator_provider") or DEFAULT_PROVIDER
             ),
             manual_generator_model=str(raw.get("manual_generator_model") or ""),
+            grobid_url=str(raw.get("grobid_url") or ""),
         ).clamped()
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return AppSettings().clamped()

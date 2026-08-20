@@ -1,114 +1,136 @@
 {% extends "base.html" %}
 {% block title %}Settings · MetaCoder{% endblock %}
 {% block content %}
+<div class="page page-narrow">
+  <div class="page-head">
+    <div>
+      <h1>Settings</h1>
+      <p>Global configuration, persisted and shared across every project.</p>
+    </div>
+  </div>
 
-<div class="mb-4">
-  <h1 class="text-2xl font-semibold">Settings</h1>
-  <p class="text-sm text-base-content/60 mt-1">Global configuration, persisted and shared across every project.</p>
-</div>
+  {% if error %}
+  <div class="alert" data-variant="destructive" role="status" style="margin-bottom:var(--sp-6)">
+    <section>{{ error }}</section>
+  </div>
+  {% endif %}
 
-{% if error %}
-<div class="alert alert-error mb-4"><span>{{ error }}</span></div>
-{% endif %}
-
-<div class="card bg-base-100 border border-base-300">
-  <div class="card-body">
-    <h2 class="card-title text-base">API keys</h2>
-    <p class="text-sm text-base-content/60 -mt-1">
-      One key per provider, used across every project. Every key is saved securely
-      in the operating system credential store; session-only keys are not accepted.
-      {% if keyring_available %}
-      Saved keys remain locked after restart and can be unlocked when needed.
-      {% else %}
-      This system's credential store is currently unavailable, so API keys cannot be added.
-      {% endif %}
-    </p>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2">
-      {% for provider in providers %}
-      <div class="rounded-box border border-base-300 p-3">
-        <div class="flex items-center justify-between gap-2">
-          <h3 class="font-medium text-sm">{{ provider_labels.get(provider, provider) }}</h3>
-          {% if keys[provider] %}
-          <span class="badge badge-success badge-sm">Unlocked</span>
-          {% elif saved_keys[provider] %}
-          <span class="badge badge-warning badge-sm">Saved · locked</span>
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2>API keys</h2>
+        <p>
+          One key per provider, used across every project. Every key is saved securely
+          in the operating system credential store; session-only keys are not accepted.
+          {% if keyring_available %}
+          Saved keys remain locked after restart and can be unlocked when needed.
           {% else %}
-          <span class="badge badge-ghost badge-sm">Not set</span>
+          This system's credential store is currently unavailable, so API keys cannot be added.
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      {% for provider in providers %}
+      <div class="panel panel-pad stack-sm">
+        <div class="cluster-between">
+          <h3 style="margin:0; font-size:var(--text-sm); font-weight:600">{{ provider_labels.get(provider, provider) }}</h3>
+          {% if keys[provider] %}
+          <span class="badge" data-variant="success">Unlocked</span>
+          {% elif saved_keys[provider] %}
+          <span class="badge" data-variant="warning">Saved · locked</span>
+          {% else %}
+          <span class="badge" data-variant="outline">Not set</span>
           {% endif %}
         </div>
         {% if provider == "gemini" %}
-        <p class="text-xs text-base-content/50">
-          Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="link link-primary">Google AI Studio</a>.
+        <p class="u-xs u-muted" style="margin:0">
+          Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary)">Google AI Studio</a>.
         </p>
         {% elif provider == "openrouter" %}
-        <p class="text-xs text-base-content/50">
-          Get a key at <a href="https://openrouter.ai/settings/keys" target="_blank" class="link link-primary">openrouter.ai</a>.
+        <p class="u-xs u-muted" style="margin:0">
+          Get a key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--primary)">openrouter.ai</a>.
         </p>
         {% endif %}
 
-        <form method="post" action="/{{ token }}/settings/api-key" class="mt-2">
+        <form method="post" action="/{{ token }}/settings/api-key" class="cluster" style="flex-wrap:nowrap">
+          <input type="password" name="api_key" placeholder="Paste your {{ provider_labels.get(provider, provider) }} API key"
+                 class="input" style="flex:1; min-width:0" required {% if not keyring_available %}disabled{% endif %}>
           <input type="hidden" name="provider" value="{{ provider }}">
-          <div class="flex gap-2">
-            <input type="password" name="api_key" placeholder="Paste your {{ provider_labels.get(provider, provider) }} API key"
-                   class="input input-sm flex-1 min-w-0" required {% if not keyring_available %}disabled{% endif %}>
-            <button type="submit" class="btn btn-primary btn-sm" {% if not keyring_available %}disabled{% endif %}>Save securely</button>
-          </div>
+          <button type="submit" class="btn" data-size="sm" {% if not keyring_available %}disabled{% endif %}>Save securely</button>
         </form>
 
         {% if not keys[provider] and saved_keys[provider] and keyring_available %}
-        <form method="post" action="/{{ token }}/settings/api-key/unlock" class="mt-2">
+        <form method="post" action="/{{ token }}/settings/api-key/unlock">
           <input type="hidden" name="provider" value="{{ provider }}">
-          <button type="submit" class="btn btn-warning btn-sm">Unlock from Keychain</button>
+          <button type="submit" class="btn" data-variant="outline" data-size="sm">Unlock from Keychain</button>
         </form>
         {% endif %}
 
-        {% if keys[provider] %}
-        <form method="post" action="/{{ token }}/settings/api-key/clear" class="mt-1">
-          <input type="hidden" name="provider" value="{{ provider }}">
-          <button type="submit" class="btn btn-ghost btn-xs">Clear key</button>
-        </form>
+        {% if keys[provider] or saved_keys[provider] %}
+        <details>
+          <summary class="u-xs u-muted">Key removal</summary>
+          <form method="post" action="/{{ token }}/settings/api-key/clear" style="margin-top:var(--sp-2)"
+                onsubmit="return confirm('Remove this saved API key from Keychain? This cannot be undone.');">
+            <input type="hidden" name="provider" value="{{ provider }}">
+            <button type="submit" class="btn" data-variant="destructive" data-size="sm">Remove saved key</button>
+          </form>
+        </details>
         {% endif %}
       </div>
       {% endfor %}
     </div>
+  </section>
 
-    <div class="divider my-1"></div>
-
-    <h2 class="card-title text-base">Coding manual generator</h2>
-    <p class="text-sm text-base-content/60 -mt-1">
-      Used only to turn uploaded PDF/DOCX coding manuals into editor drafts. It is
-      independent of every project's coding/extraction provider and model.
-    </p>
-    <form method="post" action="/{{ token }}/settings/app" class="mt-2 space-y-3">
-      <div class="flex items-end gap-3 flex-wrap">
-        <div>
-          <label class="fieldset-legend text-sm">Provider</label>
-          <select name="manual_generator_provider" class="select select-sm w-40">
-            {% for provider in providers %}
-            <option value="{{ provider }}" {% if app_settings.manual_generator_provider == provider %}selected{% endif %}>
-              {{ provider_labels.get(provider, provider) }}
-            </option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="flex-1 min-w-48">
-          <label class="fieldset-legend text-sm">Model</label>
-          <input type="text" name="manual_generator_model"
-                 value="{{ app_settings.manual_generator_model }}"
-                 class="input input-sm w-full font-mono" required>
-        </div>
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2>Coding manual generator</h2>
+        <p>
+          Used only to turn uploaded PDF/DOCX coding manuals into editor drafts. It is
+          independent of every project's coding/extraction provider and model.
+        </p>
       </div>
-      <div class="flex items-end gap-3 flex-wrap">
-        <div>
-          <label class="fieldset-legend text-sm">Max document upload size (MB)</label>
-          <input type="number" name="upload_size_cap_mb" value="{{ app_settings.upload_size_cap_mb }}"
-                 min="1" max="1024" class="input input-sm w-28">
+    </div>
+    <div class="panel panel-pad">
+      <form method="post" action="/{{ token }}/settings/app" class="stack">
+        <div class="grid-2">
+          <div class="field">
+            <label for="manual-generator-provider">Provider</label>
+            <select id="manual-generator-provider" name="manual_generator_provider" class="select">
+              {% for provider in providers %}
+              <option value="{{ provider }}" {% if app_settings.manual_generator_provider == provider %}selected{% endif %}>
+                {{ provider_labels.get(provider, provider) }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="manual-generator-model">Model</label>
+            <input type="text" id="manual-generator-model" name="manual_generator_model"
+                   value="{{ app_settings.manual_generator_model }}" class="input u-mono" required>
+          </div>
         </div>
-        <button type="submit" class="btn btn-primary btn-sm">Save global settings</button>
-      </div>
-    </form>
-  </div>
+        <div class="field">
+          <label for="grobid-url">GROBID server URL (optional)</label>
+          <input type="text" id="grobid-url" name="grobid_url" value="{{ app_settings.grobid_url }}"
+                 placeholder="http://localhost:8070" class="input u-mono">
+          <p class="u-xs u-muted" style="margin:0">
+            Optional — used only to improve PDF-matching suggestions on the Coding sheet tab.
+            Leave blank to use the built-in filename/text heuristic.
+          </p>
+        </div>
+        <div class="cluster" style="justify-content:space-between">
+          <div class="field field-max">
+            <label for="upload-size-cap">Max document upload size (MB)</label>
+            <input type="number" id="upload-size-cap" name="upload_size_cap_mb" value="{{ app_settings.upload_size_cap_mb }}"
+                   min="1" max="1024" class="input">
+          </div>
+          <button type="submit" class="btn">Save global settings</button>
+        </div>
+      </form>
+    </div>
+  </section>
 </div>
-
 {% endblock %}

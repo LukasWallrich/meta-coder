@@ -54,12 +54,17 @@ Rules:
 
 
 def _build_prompt(manual: CodingManual, rows: list[CodingSheetRow]) -> str:
-    row_lines = "\n".join(f"- row_id: {row.row_id}\n  locator: {row.locator}" for row in rows)
+    row_lines = "\n".join(
+        f"- row_id: {row.row_id}\n  locator: {row.locator or '(none)'}" for row in rows
+    )
     return (
         f"{BASELINE_RULES}\n\n"
         f"Effect definition for this meta-analysis:\n{manual.effect_definition}\n\n"
         f"Code the following {len(rows)} row(s) from the attached PDF. Each row is one "
-        "study/experiment/condition; use its locator to find the right one:\n"
+        "study/experiment/condition; use its locator to find the right one. A row with no "
+        "locator means this manuscript has only one effect of interest: identify and code it. "
+        "If it is not clear which effect that is, say so in the row's `notes` field rather "
+        "than guessing:\n"
         f"{row_lines}"
     )
 

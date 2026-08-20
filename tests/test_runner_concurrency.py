@@ -12,7 +12,7 @@ from meta_coder.coding_sheet import CodingSheet, CodingSheetRow
 from meta_coder.extraction import ExtractionResult
 from meta_coder.manual import parse_coding_manual
 from meta_coder.projects import Project
-from meta_coder.runner import Runner
+from meta_coder.runner import Runner, load_persisted_results
 
 
 MANUAL_YAML = """
@@ -177,6 +177,51 @@ def test_retry_of_a_subset_does_not_blank_out_other_pdfs_results(tmp_path, monke
     # "not_run" row, even though this run never touched ok.pdf at all.
     assert ",ok.pdf," in coded_csv
     assert "not_run" not in coded_csv
+
+
+def test_provider_exception_is_persisted_for_review_after_restart(tmp_path, monkeypatch):
+    manual = parse_coding_manual(MANUAL_YAML)
+    project = _make_project(tmp_path)
+    sheet = _make_sheet(["failed.pdf"])
+
+    def fake_extract(**_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(runner_module, "extract_pdf_effects", fake_extract)
+
+    runner = Runner()
+    runner.start(project=project, manual=manual, coding_sheet=sheet, api_key="fake")
+    _run_to_completion(runner, project.project_id)
+
+    persisted = load_persisted_results(project)
+    assert persisted["failed.pdf"].status == "error"
+    assert "provider unavailable" in (persisted["failed.pdf"].error or "")
+
+
+def test_resume_skips_already_successfully_coded_pdfs(tmp_path, monkeypatch):
+    manual = parse_coding_manual(MANUAL_YAML)
+    project = _make_project(tmp_path)
+    sheet = _make_sheet(["ok.pdf", "retry.pdf"])
+    calls = []
+
+    def fake_extract(*, pdf_path, manual, rows, api_key, model, **_kwargs):
+        calls.append(pdf_path.name)
+        row = rows[0]
+        return ExtractionResult(
+            source_pdf=pdf_path.name,
+            status="ok" if pdf_path.name == "ok.pdf" else "error",
+            coded_by_row_id={row.row_id: {"Condition": {"value": "x", "evidence": "p1"}}},
+        )
+
+    monkeypatch.setattr(runner_module, "extract_pdf_effects", fake_extract)
+    runner = Runner()
+    runner.start(project=project, manual=manual, coding_sheet=sheet, api_key="fake")
+    _run_to_completion(runner, project.project_id)
+    runner.start(project=project, manual=manual, coding_sheet=sheet, api_key="fake")
+    _run_to_completion(runner, project.project_id)
+
+    assert calls.count("ok.pdf") == 1
+    assert calls.count("retry.pdf") == 2
 
 
 def test_cancel_skips_unstarted_pdfs_but_keeps_completed_ones(tmp_path, monkeypatch):
