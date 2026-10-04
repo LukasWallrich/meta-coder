@@ -205,5 +205,5 @@ def project_archive_files(project: Project) -> list[tuple[Path, str]]:
             continue
         if rel.parts and rel.parts[0] == ".meta_coder":
             continue
-        files.append((path, str(rel)))
+        files.append((path, rel.as_posix()))
     return files

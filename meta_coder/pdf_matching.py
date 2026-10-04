@@ -566,7 +566,7 @@ def apply_source_pdf_matches(path: Path, mapping: dict[str, str]) -> None:
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(rows)
-    path.write_text(buffer.getvalue(), encoding="utf-8")
+    path.write_text(buffer.getvalue(), encoding="utf-8", newline="")
 
 
 @dataclass

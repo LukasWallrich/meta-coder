@@ -28,6 +28,7 @@ def test_platform_data_directory(monkeypatch, platform, env, expected):
 def test_explicit_home_is_expanded_and_resolved(monkeypatch, tmp_path):
     monkeypatch.setenv('META_CODER_HOME', ' ~/data ')
     monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
     assert paths.app_data_dir() == tmp_path / 'data'
 
 

@@ -95,7 +95,7 @@ def test_export_zip_and_csv_downloads(site):
     client, project, _ = site
     for kind, filename in [('coded', 'coded_data.csv'), ('evidence', 'evidence.csv')]:
         assert client.get(url(project, '/download/' + kind)).status_code == 404
-        (project.output_dir / filename).write_text('row_id,value\nr1,1\n')
+        (project.output_dir / filename).write_bytes(b'row_id,value\nr1,1\n')
         response = client.get(url(project, '/download/' + kind))
         assert response.status_code == 200 and response.text == 'row_id,value\nr1,1\n'
         assert filename in response.headers['content-disposition']
