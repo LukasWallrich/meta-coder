@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% from "_icons.html" import workflow_icon %}
 {% block title %}{{ project.name }} · MetaCoder{% endblock %}
 {% block content %}
+
 <div class="page" id="tab-root" data-project-id="{{ project.project_id }}" data-force-tab="{{ force_tab or '' }}">
 
   <nav class="breadcrumb" aria-label="Breadcrumb">
@@ -24,46 +26,82 @@
   <div class="alert" data-variant="warning" role="status" style="margin-bottom:var(--sp-6)"><section>{{ warning }}</section></div>
   {% endif %}
 
-  <div class="tabbar" role="tablist" aria-label="Project sections">
+  <div id="unsaved-changes" class="alert hidden workflow-notice" data-variant="info" role="status">
+    <section>You have unsaved changes. Save them in the edited section before running extraction.</section>
+  </div>
+  <div id="background-update" class="alert hidden workflow-notice" data-variant="info" role="status">
+    <section>Background processing has finished. Save your changes, then <a href="?tab=results">refresh the project</a> to see the latest results and matches.</section>
+  </div>
+  <div class="project-layout">
+  <aside class="project-sidebar" aria-label="Project navigation">
+  {% macro sidebar_status(label, state='neutral', id='') -%}
+    <span class="project-tab-status" data-state="{{ state }}"{% if id %} id="{{ id }}"{% endif %}>{{ label }}</span>
+  {%- endmacro %}
+  <div class="project-tabs" role="tablist" aria-label="Project sections" aria-orientation="vertical">
+    <button type="button" role="tab" data-tab-link="analysis">
+      {{ workflow_icon("analysis") }}<span class="project-tab-copy"><span>Define your analysis</span>
+      {% if manual_error %}{{ sidebar_status('Fix coding manual', 'error') }}
+      {% elif manual and manual.is_complete %}{{ sidebar_status('Defined', 'success') }}
+      {% else %}{{ sidebar_status('Not defined yet') }}{% endif %}
+      </span>
+    </button>
     <button type="button" role="tab" data-tab-link="manual">
-      Coding manual
-      {% if manual_error %}<span id="manual-sidebar-status" class="badge badge-dot" data-variant="destructive"></span>
-      {% elif manual and not manual.is_complete %}<span id="manual-sidebar-status" class="badge badge-dot" data-variant="warning"></span>
-      {% else %}<span id="manual-sidebar-status" class="badge badge-dot" data-variant="success"></span>{% endif %}
+      {{ workflow_icon("manual") }}<span class="project-tab-copy"><span>Coding manual</span>
+      {% if manual_error %}{{ sidebar_status('Needs correction', 'error', 'manual-sidebar-status') }}
+      {% elif not manual or not manual.is_complete %}{{ sidebar_status('Needs effect definition', 'warning', 'manual-sidebar-status') }}
+      {% else %}{{ sidebar_status('Ready', 'success', 'manual-sidebar-status') }}{% endif %}
+      </span>
     </button>
     <button type="button" role="tab" data-tab-link="coding-sheet">
-      Coding sheet
-      {% if coding_sheet.is_valid and coding_sheet.rows %}<span class="badge" data-variant="success">{{ coding_sheet.rows | length }}</span>
-      {% elif not coding_sheet.is_valid %}<span class="badge" data-variant="destructive">{{ coding_sheet.issues | length }}</span>
-      {% else %}<span class="badge" data-variant="outline">0</span>{% endif %}
+      {{ workflow_icon("coding-sheet") }}<span class="project-tab-copy"><span>Coding sheet</span>
+      {% set sheet_issue_count = coding_sheet.sheet_issues | length %}
+      {% if sheet_issue_count %}{{ sidebar_status('%s sheet issue%s' | format(sheet_issue_count, '' if sheet_issue_count == 1 else 's'), 'error') }}
+      {% elif coding_sheet.pdf_issues %}{{ sidebar_status('Needs PDF matching', 'warning') }}
+      {% elif coding_sheet.rows %}{{ sidebar_status('%s row%s ready' | format(coding_sheet.rows | length, '' if coding_sheet.rows | length == 1 else 's'), 'success') }}
+      {% else %}{{ sidebar_status('No rows yet') }}{% endif %}
+      </span>
     </button>
     <button type="button" role="tab" data-tab-link="sources">
-      Source PDFs
-      <span class="badge" data-variant="outline">{{ uploaded_pdfs_count }}</span>
+      {{ workflow_icon("sources") }}<span class="project-tab-copy"><span>Source PDFs</span>
+      {% if uploaded_pdfs_count %}{{ sidebar_status('%s PDF%s uploaded' | format(uploaded_pdfs_count, '' if uploaded_pdfs_count == 1 else 's')) }}
+      {% else %}{{ sidebar_status('No PDFs yet') }}{% endif %}
+      </span>
     </button>
     <button type="button" role="tab" data-tab-link="identify">
-      PDF identification
+      {{ workflow_icon("identify") }}<span class="project-tab-copy"><span>PDF matching</span>
       {% set pdf_attn = coding_sheet.pdf_issues | length + orphan_pdfs_count %}
-      {% if pdf_scanning %}<span class="badge badge-dot" data-variant="info"></span>
-      {% elif pdf_attn %}<span class="badge" data-variant="warning">{{ pdf_attn }}</span>
-      {% else %}<span class="badge" data-variant="success">✓</span>{% endif %}
+      {% if pdf_scanning %}{{ sidebar_status('Scanning PDFs', 'info') }}
+      {% elif pdf_attn %}{{ sidebar_status('Needs review', 'warning') }}
+      {% elif matched_papers_count %}{{ sidebar_status('%s PDF%s matched' | format(matched_papers_count, '' if matched_papers_count == 1 else 's'), 'success') }}
+      {% else %}{{ sidebar_status('No matches yet') }}{% endif %}
+      </span>
     </button>
     <button type="button" role="tab" data-tab-link="run">
-      Run
-      {% if is_running %}<span class="badge badge-dot" data-variant="info"></span>
-      {% elif not api_key_set %}<span class="badge badge-dot" data-variant="outline"></span>{% endif %}
+      {{ workflow_icon("run") }}<span class="project-tab-copy"><span>Run</span>
+      {% if is_running %}{{ sidebar_status('Running', 'info') }}
+      {% elif can_run %}{{ sidebar_status('Ready to run', 'success') }}
+      {% elif not api_key_set %}{{ sidebar_status('Connection needed', 'warning') }}
+      {% elif matched_pdf_count and not pending_pdf_count %}{{ sidebar_status('All matched PDFs coded', 'success') }}
+      {% else %}{{ sidebar_status('Setup needed', 'warning') }}{% endif %}
+      </span>
     </button>
-    {% if has_results %}
     <button type="button" role="tab" data-tab-link="results">
-      Results <span class="badge" data-variant="success">{{ completed_articles | length }}</span>
-      {% if failed_result_count %}<span class="badge" data-variant="destructive">{{ failed_result_count }}</span>{% endif %}
+      {{ workflow_icon("results") }}<span class="project-tab-copy"><span>Results</span>
+      {% set completed_count = completed_articles | length %}
+      {% if failed_result_count %}{{ sidebar_status('%s completed · %s failed' | format(completed_count, failed_result_count), 'error') }}
+      {% elif completed_count %}{{ sidebar_status('%s completed' | format(completed_count), 'success') }}
+      {% elif is_running %}{{ sidebar_status('Awaiting results', 'info') }}
+      {% elif has_results %}{{ sidebar_status('Needs review', 'warning') }}
+      {% else %}{{ sidebar_status('No results yet') }}{% endif %}
+      </span>
     </button>
-    {% endif %}
-    <button type="button" role="tab" data-tab-link="manage">Manage</button>
+    <button type="button" role="tab" data-tab-link="manage">{{ workflow_icon("manage") }}<span class="project-tab-copy">Project settings</span></button>
   </div>
+  </aside>
+  <div class="project-content">
 
-  {% macro page_url(tab, run_page, id_issues_page, id_matches_page, id_saved_page, id_orphans_page, sources_page) -%}
-  /{{ token }}/projects/{{ project.project_id }}?tab={{ tab }}&run_sort={{ run_sort }}&run_dir={{ run_dir }}&run_page={{ run_page }}&id_issues_page={{ id_issues_page }}&id_matches_page={{ id_matches_page }}&id_saved_page={{ id_saved_page }}&id_orphans_page={{ id_orphans_page }}&sources_page={{ sources_page }}
+  {% macro page_url(tab, run_page, id_issues_page, id_matches_page, id_saved_page, id_orphans_page, sources_page, sheet_page=sheet_page) -%}
+  /{{ token }}/projects/{{ project.project_id }}?tab={{ tab }}&run_sort={{ run_sort }}&run_dir={{ run_dir }}&run_page={{ run_page }}&id_issues_page={{ id_issues_page }}&id_matches_page={{ id_matches_page }}&id_saved_page={{ id_saved_page }}&id_orphans_page={{ id_orphans_page }}&sources_page={{ sources_page }}&sheet_page={{ sheet_page }}
   {%- endmacro %}
 
   {% macro pager(page, total_pages, count, noun, previous_url, next_url) %}
@@ -80,12 +118,49 @@
   {% endif %}
   {% endmacro %}
 
+  <!-- Analysis definition -->
+  <section class="tab-panel hidden" data-tab-panel="analysis">
+    <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/analysis/" target="_blank" rel="noopener">Analysis guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
+      <div><h2>{{ workflow_icon("analysis") }}Define your analysis</h2><p>Name your analysis and define the effect to extract from each study.</p></div>
+    </div>
+    <div class="panel panel-pad stack">
+      {% if manual_editor_json %}
+        <div class="manual-definition stack">
+          <div class="stack-sm">
+            <div class="field">
+              <label for="manual-name">Name</label>
+              <input type="text" id="manual-name" form="manual-form" class="input" required>
+            </div>
+            <div class="field">
+              <label for="manual-description">Description <span class="u-muted">(optional)</span></label>
+              <textarea id="manual-description" form="manual-form" class="textarea" rows="2"></textarea>
+            </div>
+            <div class="field">
+              <label for="manual-effect-definition">
+                Effect definition <span class="u-muted">— what comparison counts as "the effect"?</span>
+              </label>
+              <textarea id="manual-effect-definition" form="manual-form" class="textarea" rows="2" required
+                        placeholder="e.g. the difference in response times between compatible and incompatible trials"></textarea>
+            </div>
+          </div>
+
+        </div>
+      <p class="u-xs u-muted">Saving changes clears existing extraction results.</p>
+      <div><button data-manual-save type="submit" form="manual-form" class="btn" data-size="sm">Validate and save</button></div>
+      {% else %}
+      <p class="u-sm">The saved manual can't be read. <a href="?tab=manual" data-tab-jump="manual">Open Coding manual</a> to import or reset it before defining your analysis.</p>
+      {% endif %}
+    </div>
+  </section>
+
   <!-- Coding manual -->
   <section class="tab-panel hidden" data-tab-panel="manual">
     <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/manual/" target="_blank" rel="noopener">Coding manual guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
       <div>
-        <h2>Coding manual</h2>
-        <p>This is the schema sent to the model — edited here, not as raw YAML.</p>
+        <h2>{{ workflow_icon("manual") }}Coding manual</h2>
+        <p>Define the coding fields and instructions for extracting information from each study.</p>
       </div>
       {% if manual_error %}
       <span id="manual-status-badge" class="badge" data-variant="destructive">Invalid</span>
@@ -99,7 +174,7 @@
     <div class="panel panel-pad stack">
       <div id="manual-draft-notice" class="alert hidden" data-variant="info" role="status">
         <section>
-          Drafted from <strong data-manual-draft-filename></strong>. Review every field below,
+          Drafted from <strong data-manual-draft-filename></strong>. Review the effect definition in Define your analysis and every coding field below,
           then choose <strong>Validate and save draft</strong>. Your saved manual and existing
           results have not changed yet.
         </section>
@@ -107,49 +182,68 @@
 
       {% if manual and not manual.is_complete and not manual_error %}
       <div id="manual-incomplete-warning" class="alert" data-variant="warning" role="status">
-        <section>The effect definition is still blank — fill it in below before this manual can be used to run a coding pass.</section>
+        <section>The effect definition is still blank — add it in <a href="?tab=analysis" data-tab-jump="analysis">Define your analysis</a> before running extraction.</section>
       </div>
       {% endif %}
 
-      <details open>
-        <summary class="u-xs u-muted">Draft from a PDF or DOCX manual with the LLM</summary>
-        <div class="effect-field-body" style="border-top:0; padding-top:var(--sp-2)">
-          <p class="u-sm u-muted">
-            Uses the global coding-manual generator:
-            <strong>{{ provider_labels.get(manual_generator_provider, manual_generator_provider) }}</strong>
-            · <code>{{ manual_generator_model }}</code>. The document becomes an unsaved
-            candidate in this editor.
-          </p>
-          {% if manual_generator_api_key_set and manual_editor_json %}
-          <form id="manual-draft-form" method="post"
-                action="/{{ token }}/projects/{{ project.project_id }}/manual/draft"
-                enctype="multipart/form-data">
-            <div class="dropzone js-upload" data-dropzone>
-              <label for="manual-draft-file">
-                <span>Drop a PDF or DOCX coding manual here, or click to browse — drafting starts automatically</span>
-                <span data-dropzone-filename class="dropzone-filename"></span>
-              </label>
-              <input class="u-visually-hidden" id="manual-draft-file" name="file" type="file"
-                     accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+      <div data-method-group class="method-picker">
+        <div class="method-picker-heading">
+          <h3 class="manual-upload-heading">How would you like to build your coding manual?</h3>
+          <p class="u-sm u-muted">Work manually, generate a draft with AI, or load a saved manual.</p>
+        </div>
+        <div class="subtabbar" role="tablist" aria-label="Coding manual method">
+          <button type="button" role="tab" data-method-link="manual-edit">Manual editing</button>
+          <button type="button" role="tab" data-method-link="manual-document">AI draft from document</button>
+          <button type="button" role="tab" data-method-link="manual-import">Import manual.yml</button>
+        </div>
+        <section data-method-panel="manual-edit">
+          <p class="u-sm u-muted">Create and edit fields yourself in the Coding fields editor below. No upload or AI generation is needed.</p>
+        </section>
+      <section class="stack-sm hidden" data-method-panel="manual-document" aria-labelledby="manual-upload-heading">
+        <div>
+          <h3 id="manual-upload-heading" class="manual-upload-heading">Draft coding fields with AI</h3>
+          <p class="u-sm u-muted manual-upload-description">Upload a document and let AI draft the fields. Review and edit the generated fields in the Coding fields editor below before saving.</p>
+        </div>
+        <form id="manual-draft-form" method="post"
+              action="/{{ token }}/projects/{{ project.project_id }}/manual/draft"
+              enctype="multipart/form-data">
+          <div class="dropzone manual-upload" data-dropzone>
+            <svg class="manual-upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z M14 2v6h6 M12 18v-6m-3 3 3-3 3 3" />
+            </svg>
+            <div class="manual-upload-copy">
+              <strong>Drop your coding manual here</strong>
+              <span class="u-xs u-muted">PDF, Word (.docx), RTF, or Markdown (.md)</span>
+              <span data-dropzone-filename class="dropzone-filename"></span>
             </div>
-          </form>
-          <div id="manual-draft-status" class="hidden" role="status" aria-live="polite"></div>
-          {% elif not manual_editor_json %}
-          <p class="u-sm u-warning">
-            Reset the unreadable saved manual below before creating an in-editor draft.
-          </p>
+            <label class="btn manual-upload-browse" data-variant="outline" data-size="sm" for="manual-draft-file">
+              Choose file
+              <input class="manual-upload-input" id="manual-draft-file" name="file" type="file"
+                     accept=".pdf,.docx,.rtf,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,text/rtf,text/markdown"
+                     aria-label="Choose a PDF, DOCX, RTF, or Markdown coding manual" aria-describedby="manual-draft-help" required
+                     {% if not manual_generator_ready or not manual_editor_json %}disabled{% endif %}>
+            </label>
+          </div>
+        </form>
+        <div id="manual-draft-status" class="hidden" role="status" aria-live="polite"></div>
+        <div id="manual-draft-help" class="u-xs u-muted">
+          {% if not manual_editor_json %}
+          <p class="u-warning">Reset the unreadable saved manual below before creating a draft.</p>
+          {% elif not manual_generator_ready %}
+          <p class="u-warning">{{ manual_generator_setup_error }} <a href="/{{ token }}/settings" style="color:var(--primary)">Open Settings</a>.</p>
           {% else %}
-          <p class="u-sm u-warning">
-            {% if manual_generator_saved_key_available %}Unlock{% else %}Save{% endif %} the
-            {{ provider_labels.get(manual_generator_provider, manual_generator_provider) }} API key in
-            <a href="/{{ token }}/settings" style="color:var(--primary)">global Settings</a> first.
-          </p>
+          AI drafting starts when you choose a file. Review the generated fields before saving.
           {% endif %}
         </div>
-      </details>
+        <p class="u-xs u-muted manual-upload-description">
+          {{ provider_labels.get(manual_generator_provider, manual_generator_provider) }} · {{ manual_generator_model }}
+          · <a href="/{{ token }}/settings" style="color:var(--primary)">Change</a>
+        </p>
+      </section>
 
-      <details>
-        <summary class="u-xs u-muted">Import an existing manual.yml</summary>
+        <section class="hidden" data-method-panel="manual-import">
+        <p class="u-sm u-muted">Load an existing manual.yml to replace the current manual. After importing, you can edit its fields in the editor below.</p>
+
         <div class="effect-field-body" style="border-top:0; padding-top:var(--sp-2)">
           <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual/import"
                 enctype="multipart/form-data"
@@ -163,8 +257,16 @@
             </div>
           </form>
         </div>
-      </details>
+              </section>
+      </div>
 
+    </div>
+
+    <div class="panel panel-pad stack project-editor-panel">
+      <div>
+        <h3 class="manual-upload-heading">Coding fields editor</h3>
+        <p class="u-sm u-muted">Your current fields appear here, whether entered manually, drafted with AI, or imported.</p>
+      </div>
       {% if manual_error %}
       <div class="alert" data-variant="destructive"><section>{{ manual_error }}</section></div>
       {% endif %}
@@ -173,55 +275,26 @@
       <form id="manual-form" method="post" action="/{{ token }}/projects/{{ project.project_id }}/manual">
         <input type="hidden" name="manual_json" id="manual-json-input">
 
-        <div id="manual-subtabs">
-          <div class="subtabbar" role="tablist">
-            <button type="button" role="tab" data-subtab-link="metadata">General</button>
-            <button type="button" role="tab" data-subtab-link="effects">Coding manual</button>
-          </div>
-
-          <div data-subtab-panel="metadata" class="stack-sm hidden">
-            <div class="field">
-              <label for="manual-name">Name</label>
-              <input type="text" id="manual-name" class="input" required>
-            </div>
-            <div class="field">
-              <label for="manual-description">Description <span class="u-muted">(optional)</span></label>
-              <textarea id="manual-description" class="textarea" rows="2"></textarea>
-            </div>
-            <div class="field">
-              <label for="manual-effect-definition">
-                Effect definition <span class="u-muted">— what comparison counts as "the effect"?</span>
-              </label>
-              <textarea id="manual-effect-definition" class="textarea" rows="2" required
-                        placeholder="e.g. the difference in response times between compatible and incompatible trials"></textarea>
-            </div>
-          </div>
-
-          <div data-subtab-panel="effects" class="hidden">
+          <div>
             <p class="u-xs u-muted" style="margin:0 0 var(--sp-2)">
-              Every field is coded for every coding sheet row. Add categories to a field to
-              constrain it to a fixed list of values. Click a field's title to expand it.
-              Every manual also gets an automatic <code>notes</code> field (marked
-              <span class="badge" data-variant="outline">auto</span>) where the
-              model explains any issues it had coding the row — it can't be edited or removed.
+              Expand a field to edit its instructions. Categories limit the allowed values.
+              The automatic notes field records coding issues.
             </p>
             <div id="effect-fields-list"></div>
             <button type="button" id="add-effect-field" class="btn" data-variant="ghost" data-size="sm" style="margin-top:var(--sp-1)">+ Add effect field</button>
           </div>
-        </div>
 
         <p class="u-xs u-muted" style="margin:var(--sp-3) 0 0">
-          Saving a changed manual clears any results so far in this project (a targeted
-          re-code of just the changed field is a planned improvement, not built yet).
+          Saving changes clears existing extraction results.
         </p>
-        <button id="manual-save-button" type="submit" class="btn" data-size="sm" style="margin-top:var(--sp-2)">
+        <button id="manual-save-button" data-manual-save type="submit" class="btn" data-size="sm" style="margin-top:var(--sp-2)">
           Validate and save
         </button>
       </form>
 
       <details>
-        <summary class="u-xs u-muted">View <span id="manual-yaml-kind">generated</span> YAML (read-only)</summary>
-        <pre class="u-xs u-mono effect-field-body" style="border-top:0; padding-top:var(--sp-2); overflow-x:auto">{{ manual_text }}</pre>
+        <summary class="u-xs u-muted"><span>View <span id="manual-yaml-kind">saved</span> YAML (read-only)</span></summary>
+        <pre id="manual-yaml-preview" class="u-xs u-mono effect-field-body" style="border-top:0; padding-top:var(--sp-2); overflow-x:auto">{{ manual_text }}</pre>
       </details>
 
       <script type="application/json" id="manual-editor-data">{{ manual_editor_json | safe }}</script>
@@ -238,8 +311,8 @@
           </summary>
           <div class="effect-field-body">
             <div class="cluster" style="align-items:flex-start">
-              <input type="text" class="input" style="flex:1; min-width:8rem" data-field="name" placeholder="field name" required>
-              <select class="select" style="width:8rem" data-field="type" data-type-select>
+              <input type="text" class="input" aria-label="Field name" style="flex:1; min-width:8rem" data-field="name" placeholder="field name" required>
+              <select class="select" aria-label="Field type" style="width:8rem" data-field="type" data-type-select>
                 <option value="string">string</option>
                 <option value="number">number</option>
                 <option value="integer">integer</option>
@@ -250,7 +323,7 @@
               </label>
               <button type="button" class="btn" data-variant="ghost" data-size="sm" style="margin-left:auto" data-remove-row>✕ Remove field</button>
             </div>
-            <textarea class="textarea" style="margin-top:var(--sp-2)" rows="2" data-field="description"
+            <textarea class="textarea" style="margin-top:var(--sp-2)" rows="2" aria-label="Field instructions" data-field="description"
                       placeholder="What should the model look for? (shown to the model as its instruction for this field)"></textarea>
 
             <div data-levels-section class="effect-field-levels hidden">
@@ -264,9 +337,9 @@
 
       <template id="tmpl-level">
         <div class="cluster" style="align-items:flex-start; margin-bottom:var(--sp-1)">
-          <input type="text" class="input" style="flex:1" data-field="value" placeholder="category label" required>
-          <input type="text" class="input" style="flex:1" data-field="description" placeholder="what distinguishes this category (optional)">
-          <button type="button" class="btn" data-variant="ghost" data-size="sm" data-remove-row>✕</button>
+          <input type="text" class="input" style="flex:1" aria-label="Category label" data-field="value" placeholder="category label" required>
+          <input type="text" class="input" style="flex:1" aria-label="Category description" data-field="description" placeholder="what distinguishes this category (optional)">
+          <button type="button" class="btn" data-variant="ghost" data-size="sm" data-remove-row aria-label="Remove category">✕</button>
         </div>
       </template>
 
@@ -286,11 +359,11 @@
   <!-- Coding sheet -->
   <section class="tab-panel hidden" data-tab-panel="coding-sheet">
     <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/coding-sheet/" target="_blank" rel="noopener">Coding sheet guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
       <div>
-        <h2>Coding sheet</h2>
+        <h2>{{ workflow_icon("coding-sheet") }}Coding sheet</h2>
         <p>
-          A fixed set of columns, one row per effect/experiment/condition to code — nothing
-          else belongs on this sheet.
+          Add one row for each effect, experiment, or condition you want to code.
         </p>
       </div>
       {% if coding_sheet.is_valid and coding_sheet.rows %}
@@ -303,6 +376,20 @@
     </div>
 
     <div class="panel panel-pad stack">
+      <div data-method-group class="method-picker">
+        <div class="method-picker-heading">
+          <h3 class="manual-upload-heading">How would you like to add your coding sheet?</h3>
+          <p class="u-sm u-muted">Upload a formatted CSV or use AI to convert a different layout.</p>
+        </div>
+        <div class="subtabbar" role="tablist" aria-label="Coding sheet method">
+          <button type="button" role="tab" data-method-link="sheet-upload">Upload formatted CSV</button>
+          <button type="button" role="tab" data-method-link="sheet-convert">AI conversion</button>
+        </div>
+
+
+      <section class="stack-sm" data-method-panel="sheet-upload">
+      <p class="u-sm u-muted">Upload a CSV in the required format. Start with the template if you need a new sheet.</p>
+      <details class="disclosure" open><summary>CSV format and template</summary><div class="disclosure-body stack-sm">
       <ul class="u-sm u-muted" style="margin:0; padding-left:1.2rem">
         <li><code>row_id</code> — effect ID: a short, unique identifier you invent for this row.</li>
         <li><code>source_pdf</code> — which uploaded PDF this effect comes from (exact filename).</li>
@@ -313,9 +400,8 @@
 
       <a href="/{{ token }}/coding-sheet-template.csv" class="btn" data-variant="outline" data-size="sm" download>
         Download coding sheet template (.csv)
-      </a>
-
-      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet" enctype="multipart/form-data">
+      </a></div></details>
+      <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet" enctype="multipart/form-data" style="margin-top:var(--sp-3)">
         <div class="dropzone js-upload" data-dropzone>
           <label for="coding-sheet-file">
             <span>Drop a CSV file here, or click to browse — uploads immediately</span>
@@ -324,7 +410,68 @@
           <input class="u-visually-hidden" id="coding-sheet-file" name="file" type="file" accept=".csv" required>
         </div>
       </form>
+      </section>
+      <section class="stack-sm hidden" data-method-panel="sheet-convert" aria-labelledby="sheet-convert-heading">
+        <div>
+          <h3 id="sheet-convert-heading" class="manual-upload-heading">Convert an existing coding sheet</h3>
+          <p class="u-sm u-muted">Use your saved coding manual and optional notes to turn a different CSV layout into this format. Review the draft before saving.</p>
+        </div>
+        <form id="sheet-draft-form" class="stack-sm" method="post"
+              action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet/draft" enctype="multipart/form-data">
+          <div class="field">
+            <label for="sheet-draft-notes">Notes for conversion <span class="u-muted">(optional)</span></label>
+            <textarea id="sheet-draft-notes" name="notes" class="textarea" rows="3" maxlength="10000"
+                      placeholder="For example: Each row is one experiment. Use Study and Outcome to build the locator. The Citation column contains the authors and year."></textarea>
+          </div>
+          <div class="field">
+            <label for="sheet-draft-file">Coding sheet CSV</label>
+            <input id="sheet-draft-file" name="file" type="file" accept=".csv,text/csv" required
+                   {% if not manual_generator_ready or manual_error or not manual or not manual.is_complete %}disabled{% endif %}>
+          </div>
+          <div><button type="submit" class="btn" data-size="sm"
+                       {% if not manual_generator_ready or manual_error or not manual or not manual.is_complete %}disabled{% endif %}>Convert to a draft</button></div>
+        </form>
+        <p class="u-xs u-muted">Uses {{ provider_labels.get(manual_generator_provider, manual_generator_provider) }} · {{ manual_generator_model }} — the same model as manual drafting. <a href="/{{ token }}/settings">Change model</a>.</p>
+        {% if manual_error or not manual or not manual.is_complete %}
+        <p class="u-xs u-warning">Complete and save the coding manual before converting a sheet.</p>
+        {% elif not manual_generator_ready %}
+        <p class="u-xs u-warning">{{ manual_generator_setup_error }} <a href="/{{ token }}/settings">Open Settings</a>.</p>
+        {% endif %}
+        <div id="sheet-draft-status" class="alert hidden" role="status" aria-live="polite"></div>
+      </section>
+      </div>
+    </div>
 
+        <section id="sheet-draft-preview" class="panel panel-pad stack project-editor-panel hidden" aria-labelledby="sheet-preview-heading">
+          <h3 id="sheet-preview-heading" class="manual-upload-heading">Converted draft · not saved</h3>
+          <p id="sheet-draft-summary" class="u-sm u-muted"></p>
+          <ul id="sheet-draft-warnings" class="u-sm"></ul>
+          <div class="table-container panel" tabindex="0" role="region" aria-label="Coding sheet rows"><table class="table" id="sheet-draft-table">
+            <thead><tr><th>row_id</th><th>source_pdf</th><th>locator</th><th>authors</th><th>year</th><th>title</th><th>doi</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div id="sheet-draft-pager" class="panel-foot hidden">
+            <span id="sheet-draft-page-summary" class="u-xs u-muted" style="margin-right:auto" aria-live="polite"></span>
+            <button type="button" id="sheet-draft-previous" class="btn" data-variant="outline" data-size="sm">Previous</button>
+            <button type="button" id="sheet-draft-next" class="btn" data-variant="outline" data-size="sm">Next</button>
+          </div>
+          <form id="sheet-draft-save-form" class="stack-sm" method="post"
+                action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet/draft/save">
+            <div class="field">
+              <label for="sheet-draft-csv">Review and edit the converted CSV</label>
+              <textarea id="sheet-draft-csv" name="csv_text" class="textarea u-mono" rows="10" required spellcheck="false"></textarea>
+              <p class="u-xs u-muted">The table above shows the generated draft. Edits here are saved; keep the column headers unchanged.</p>
+            </div>
+            <p class="u-xs u-muted">Saving replaces the current coding sheet and clears existing extraction results if the sheet changes. Unmatched PDFs can be identified afterward.</p>
+            <div class="cluster">
+              <button type="submit" class="btn" data-size="sm" {% if is_running %}disabled{% endif %}>Save converted sheet</button>
+              <button type="button" id="sheet-draft-discard" class="btn" data-variant="outline" data-size="sm">Discard draft</button>
+            </div>
+          </form>
+        </section>
+
+    <div class="panel panel-pad stack project-editor-panel">
+      <h3 class="manual-upload-heading">Saved coding sheet</h3>
       {% if coding_sheet.sheet_issues %}
       <div class="alert" data-variant="destructive">
         <section>
@@ -341,18 +488,18 @@
       {% if coding_sheet.pdf_issues %}
       <div class="alert" data-variant="warning">
         <section>{{ coding_sheet.pdf_issues | length }} row(s) still need a matching PDF — see the
-          <a href="#" data-tab-jump="identify">PDF identification</a> tab.</section>
+          <a href="#" data-tab-jump="identify">PDF matching</a> tab.</section>
       </div>
       {% endif %}
 
       {% if coding_sheet.rows %}
-      <div class="table-container panel" style="border-radius:var(--radius-md)">
+      <div class="table-container panel" tabindex="0" role="region" aria-label="Coding sheet rows" style="border-radius:var(--radius-md)">
         <table class="table">
           <thead>
             <tr><th>row_id</th><th>source_pdf</th><th>locator</th><th>authors</th><th>year</th></tr>
           </thead>
           <tbody>
-            {% for row in coding_sheet.rows[:20] %}
+            {% for row in sheet_rows %}
             <tr>
               <td>{{ row.row_id }}</td><td>{{ row.source_pdf }}</td><td>{{ row.locator }}</td>
               <td>{{ row.authors }}</td><td>{{ row.year }}</td>
@@ -361,9 +508,11 @@
           </tbody>
         </table>
       </div>
-      {% if coding_sheet.rows | length > 20 %}
-      <p class="u-xs u-muted" style="margin:0">Showing the first 20 of {{ coding_sheet.rows | length }} rows.</p>
-      {% endif %}
+      {{ pager(sheet_page, sheet_total_pages, coding_sheet.rows | length, 'row',
+          page_url('coding-sheet', run_page, id_issues_page, id_matches_page, id_saved_page, id_orphans_page, sources_page, sheet_page - 1),
+          page_url('coding-sheet', run_page, id_issues_page, id_matches_page, id_saved_page, id_orphans_page, sources_page, sheet_page + 1)) }}
+      {% else %}
+      <p class="u-sm u-muted">No saved rows yet. Upload a formatted CSV or convert an existing sheet above. Converted drafts appear in a separate review card before you save them.</p>
       {% endif %}
     </div>
   </section>
@@ -371,7 +520,8 @@
   <!-- PDF uploads -->
   <section class="tab-panel hidden" data-tab-panel="sources">
     <div class="section-head">
-      <div><h2>Source PDFs</h2></div>
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/sources/" target="_blank" rel="noopener">Source PDF guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
+      <div><h2>{{ workflow_icon("sources") }}Source PDFs</h2><p>Add the studies you want to code. You can upload several PDFs at once.</p></div>
       <span class="badge" data-variant="outline">{{ uploaded_pdfs_count }} uploaded</span>
     </div>
 
@@ -388,7 +538,7 @@
 
       {% if uploaded_pdfs_count %}
       <div class="panel">
-        <div class="table-container">
+        <div class="table-container" tabindex="0" role="region" aria-label="Scrollable data table">
           <table class="table table-compact">
             <thead>
               <tr><th>Filename</th><th>Size</th><th><span class="u-visually-hidden">Actions</span></th></tr>
@@ -413,18 +563,20 @@
       {{ pager(sources_page, sources_total_pages, uploaded_pdfs_count, 'PDF',
           page_url('sources', run_page, id_issues_page, id_matches_page, id_saved_page, id_orphans_page, sources_page - 1),
           page_url('sources', run_page, id_issues_page, id_matches_page, id_saved_page, id_orphans_page, sources_page + 1)) }}
+      {% else %}
+      <div class="empty"><p class="empty-title">No source PDFs yet</p><p class="empty-text">Upload the articles referenced by your coding sheet. Filenames help match each study.</p></div>
       {% endif %}
     </div>
   </section>
 
-  <!-- PDF identification -->
+  <!-- PDF matching -->
   <section class="tab-panel hidden" data-tab-panel="identify">
     <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/matching/" target="_blank" rel="noopener">PDF matching guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
       <div>
-        <h2>PDF identification</h2>
+        <h2>{{ workflow_icon("identify") }}PDF matching</h2>
         <p>
-          Every coding sheet row's <code>source_pdf</code> must resolve to an uploaded filename —
-          this is where you fix the ones that don't.
+          Connect coding sheet rows to their source documents. Review suggested matches before applying them.
         </p>
       </div>
     </div>
@@ -442,7 +594,7 @@
           </div>
           {% set scan_total = (pdf_scan_state.total if pdf_scan_state else 0) or 1 %}
           {% set scan_pct = ((pdf_scan_state.processed / scan_total * 100) if pdf_scan_state else 0) %}
-          <div class="run-progress" data-progress-bar role="progressbar" aria-valuemin="0"
+          <div class="run-progress" data-progress-bar role="progressbar" aria-label="Processing progress" aria-valuemin="0"
                aria-valuemax="{{ scan_total }}" aria-valuenow="{{ pdf_scan_state.processed if pdf_scan_state else 0 }}">
             <span style="width: {{ scan_pct }}%"></span>
           </div>
@@ -451,10 +603,10 @@
       {% endif %}
 
       {% if not pdf_scanning and not pdf_issues_count and not pdf_match_suggestions_count and not matched_papers_count and not orphan_pdfs_count %}
-      <p class="u-sm u-muted" style="margin:0">Nothing to identify — every row's <code>source_pdf</code> resolves to an uploaded file, and every uploaded PDF is used.</p>
+      <div class="empty"><p class="empty-title">No matches to review</p><p class="empty-text">Add your coding sheet and source PDFs to match studies here.</p></div>
       {% elif not pdf_scanning %}
       <div id="identify-subtabs">
-        <div class="tabbar" role="tablist" aria-label="PDF identification sections" style="margin-bottom:var(--sp-4)">
+        <div class="subtabbar" role="tablist" aria-label="PDF matching sections" style="margin-bottom:var(--sp-4)">
           <button type="button" role="tab" data-subtab-link="needs-pdf">
             Needs a PDF
             <span class="badge" data-variant="{{ 'destructive' if pdf_issues_count else 'outline' }}">{{ pdf_issues_count }}</span>
@@ -497,7 +649,7 @@
           {% if pdf_match_suggestions_count %}
           <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/coding-sheet/match-pdfs">
             <div class="panel">
-              <div class="table-container">
+              <div class="table-container" tabindex="0" role="region" aria-label="Scrollable data table">
                 <table class="table table-compact">
                   <thead>
                     <tr><th>Paper</th><th>Match</th><th>Confidence</th><th><span class="u-visually-hidden">Save</span></th></tr>
@@ -554,7 +706,7 @@
         <div class="hidden" data-subtab-panel="matches">
           {% if matched_papers_count %}
           <div class="panel">
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="Scrollable data table">
               <table class="table table-compact">
                 <thead><tr><th>Paper</th><th>PDF</th><th><span class="u-visually-hidden">Actions</span></th></tr></thead>
                 <tbody>
@@ -605,11 +757,12 @@
 
   <!-- Run -->
   <section class="tab-panel hidden" data-tab-panel="run">
-    <div class="section-head"><div><h2>Run</h2></div></div>
+    <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/run/" target="_blank" rel="noopener">Extraction guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a><div><h2>{{ workflow_icon("run") }}Run</h2></div></div>
 
     {% set blockers = [] %}
     {% if manual_error %}{% set _ = blockers.append("Fix the coding manual.") %}{% endif %}
-    {% if manual and not manual.is_complete %}{% set _ = blockers.append("Fill in the effect definition on the Coding manual tab.") %}{% endif %}
+    {% if manual and not manual.is_complete %}{% set _ = blockers.append("Fill in the effect definition in Define your analysis.") %}{% endif %}
     {% if coding_sheet.sheet_issues %}{% set _ = blockers.append("Fix the coding sheet issues.") %}{% endif %}
     {% if not coding_sheet.sheet_issues and not coding_sheet.rows %}{% set _ = blockers.append("Match at least one coding-sheet row to an uploaded PDF.") %}{% endif %}
     {% if blockers and not is_running %}
@@ -635,17 +788,13 @@
                data-provider-status='{{ provider_key_status | tojson }}'
                data-provider-labels='{{ provider_labels | tojson }}'>
             <section>
-              <span data-run-key-message>{% if api_key_set %}{{ provider_labels.get(run_settings.provider, run_settings.provider) }} API key is set for this session.
-              {% elif saved_key_available %}The saved {{ provider_labels.get(run_settings.provider, run_settings.provider) }} key is locked for this session.
+              <span data-run-key-message>{% if run_provider_setup_error %}{{ run_provider_setup_error }}
+              {% elif run_settings.provider == "openai_compatible" and api_key_set %}OpenAI-compatible endpoint is configured (API key optional).
+              {% elif api_key_set %}{{ provider_labels.get(run_settings.provider, run_settings.provider) }} API key is saved. Keychain access will be requested when needed.
+              {% elif saved_key_available %}{{ provider_labels.get(run_settings.provider, run_settings.provider) }} API key is saved.
               {% else %}No {{ provider_labels.get(run_settings.provider, run_settings.provider) }} API key set yet.{% endif %}</span>
-              One key per provider is shared across every project —
-              <span class="u-nowrap"><a href="/{{ token }}/settings" style="color:var(--primary)">manage it in Settings</a>.</span>
-              {% if keyring_available %}
-              <form data-run-unlock-form method="post" action="/{{ token }}/projects/{{ project.project_id }}/run/unlock" style="margin-top:var(--sp-2)" {% if api_key_set or not saved_key_available %}hidden{% endif %}>
-                <input type="hidden" name="provider" value="{{ run_settings.provider }}">
-                <button type="submit" class="btn" data-variant="outline" data-size="sm">Unlock from Keychain</button>
-              </form>
-              {% endif %}
+              <a href="/{{ token }}/settings" style="color:var(--primary)">Manage connection</a>.
+
             </section>
           </div>
 
@@ -661,7 +810,7 @@
                   {% endfor %}
                 </select>
                 <p class="u-xs u-muted" style="margin:var(--sp-1) 0 0">
-                  Gemini sends PDFs natively; OpenRouter is the experimental backup provider.
+                  Gemini sends PDFs natively; OpenRouter supports PDF input. OpenAI-compatible endpoints use extracted PDF text and the base URL in Settings.
                 </p>
               </div>
               <div class="field">
@@ -671,6 +820,7 @@
               </div>
             </div>
 
+            <details class="disclosure"><summary>Advanced run settings</summary><div class="disclosure-body stack">
             <div class="grid-3">
               <div class="field">
                 <label for="run-parallel">Parallel requests</label>
@@ -701,9 +851,9 @@
                 <p class="u-xs u-muted" style="margin:var(--sp-1) 0 0">"flex" is cheaper with variable latency.</p>
               </div>
             </div>
-            <div data-provider-setting="openrouter" {% if run_settings.provider != 'openrouter' %}hidden{% endif %}>
+            <div data-provider-setting="openrouter openai_compatible" {% if run_settings.provider not in ['openrouter', 'openai_compatible'] %}hidden{% endif %}>
               <div class="field field-max">
-                <label for="run-reasoning-effort">Reasoning effort <span class="u-muted">(OpenRouter only)</span></label>
+                <label for="run-reasoning-effort">Reasoning effort</label>
                 <select id="run-reasoning-effort" name="reasoning_effort" class="select" {% if is_running %}disabled{% endif %}>
                   {% for effort in reasoning_efforts %}
                   <option value="{{ effort }}" {% if run_settings.reasoning_effort == effort %}selected{% endif %}>{{ effort or "(model default)" }}</option>
@@ -712,8 +862,9 @@
               </div>
             </div>
 
+            </div></details>
             <div class="cluster" style="justify-content:flex-end">
-              <button type="submit" class="btn" data-variant="outline" data-size="sm" {% if is_running %}disabled{% endif %}>Save</button>
+              <button type="submit" class="btn" data-variant="outline" data-size="sm" {% if is_running %}disabled{% endif %}>Save run settings</button>
             </div>
           </form>
         </div>
@@ -749,7 +900,7 @@
             <div class="cluster-between u-sm" style="margin-bottom:var(--sp-1)">
               <span data-progress-summary>{{ run_state.processed }} / {{ run_state.total }} PDFs processed — {{ run_state.status }}</span>
             </div>
-            <div class="run-progress" data-progress-bar role="progressbar" aria-valuemin="0"
+            <div class="run-progress" data-progress-bar role="progressbar" aria-label="Processing progress" aria-valuemin="0"
                  aria-valuemax="{{ run_state.total or 1 }}" aria-valuenow="{{ run_state.processed }}">
               <span style="width: {{ pct }}%"></span>
             </div>
@@ -766,9 +917,37 @@
   </section>
 
   <!-- Results -->
-  {% if has_results %}
   <section class="tab-panel hidden" data-tab-panel="results">
-    <div class="section-head"><div><h2>Results</h2></div></div>
+    <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/results/" target="_blank" rel="noopener">Results guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a><div><h2>{{ workflow_icon("results") }}Results</h2><p>Review coded studies and download your data with supporting evidence.</p></div></div>
+    <div class="panel panel-pad stack-sm" style="margin-bottom:var(--sp-4)">
+      <div class="cluster-between">
+        <strong>Audit and reproducibility</strong>
+        <a href="/{{ token }}/projects/{{ project.project_id }}/download/zip" class="btn" data-variant="outline" data-size="sm">Download audit ZIP</a>
+      </div>
+      <p class="u-sm u-muted">Includes project inputs, saved outputs, app and model provenance, dated requests, full provider responses, and retry history. Earlier runs may have incomplete provenance.</p>
+      <p class="u-xs"><a href="/{{ token }}/docs/auditing/" target="_blank" rel="noopener">What is recorded and how to verify it ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a></p>
+    </div>
+    {% if not has_results %}
+    <div class="panel empty"><p class="empty-title">Your results will appear here</p><p class="empty-text">Prepare your manual, coding sheet, and PDFs, then run extraction.</p><a class="btn" data-variant="outline" href="?tab=run" data-tab-jump="run">Go to Run</a></div>
+    {% endif %}
+    {% if result_files_available %}
+    <div class="panel panel-pad stack" style="margin-bottom:var(--sp-4)">
+      <p class="u-sm u-muted">
+        <code>evidence.csv</code> has the same shape as <code>coded_data.csv</code>, with each
+        cell replaced by the page/quote that supports it — verify a few rows against the source
+        PDF before trusting the coded values.
+      </p>
+      <div class="cluster">
+        <a href="/{{ token }}/projects/{{ project.project_id }}/download/coded" class="btn" data-variant="outline" data-size="sm">
+          Download coded_data.csv
+        </a>
+        <a href="/{{ token }}/projects/{{ project.project_id }}/download/evidence" class="btn" data-variant="outline" data-size="sm">
+          Download evidence.csv
+        </a>
+      </div>
+    </div>
+    {% endif %}
     {% if run_row_count %}
     {% macro result_sort_link(col, label) %}
     {% set next_dir = 'desc' if run_sort == col and run_dir == 'asc' else 'asc' %}
@@ -777,7 +956,7 @@
     </a>
     {% endmacro %}
     <div class="panel" style="margin-bottom:var(--sp-4)">
-      <div class="table-container">
+      <div class="table-container" tabindex="0" role="region" aria-label="Scrollable data table">
         <table class="table">
           <thead>
             <tr>
@@ -838,30 +1017,12 @@
       {% endif %}
     </div>
     {% endif %}
-    <div class="panel panel-pad stack">
-      {% if result_files_available %}
-      <p class="u-sm u-muted">
-        <code>evidence.csv</code> has the same shape as <code>coded_data.csv</code>, with each
-        cell replaced by the page/quote that supports it — verify a few rows against the source
-        PDF before trusting the coded values.
-      </p>
-      <div class="cluster">
-        <a href="/{{ token }}/projects/{{ project.project_id }}/download/coded" class="btn" data-variant="outline" data-size="sm">
-          Download coded_data.csv
-        </a>
-        <a href="/{{ token }}/projects/{{ project.project_id }}/download/evidence" class="btn" data-variant="outline" data-size="sm">
-          Download evidence.csv
-        </a>
-      </div>
-      {% endif %}
-
-    </div>
   </section>
-  {% endif %}
 
   <!-- Manage -->
   <section class="tab-panel hidden" data-tab-panel="manage">
-    <div class="section-head"><div><h2>Manage</h2></div></div>
+    <div class="section-head">
+      <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/projects/" target="_blank" rel="noopener">Project settings guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a><div><h2>{{ workflow_icon("manage") }}Project settings</h2><p>Export project files or manage stored data.</p></div></div>
     <div class="panel panel-pad stack">
       <p class="u-sm u-muted">Project files are stored at <code class="u-xs">{{ project.path }}</code>.</p>
 
@@ -872,7 +1033,7 @@
             <button type="submit" class="btn" data-variant="outline" data-size="sm">Open project folder</button>
           </form>
           <a href="/{{ token }}/projects/{{ project.project_id }}/download/zip" class="btn" data-variant="outline" data-size="sm">
-            Download project files (.zip)
+            Download project and audit (.zip)
           </a>
         </div>
       </div>
@@ -881,7 +1042,7 @@
         <h3 style="margin:0 0 var(--sp-2); font-size:var(--text-sm); font-weight:600; color:var(--muted-foreground)">Generated data</h3>
         <p class="u-sm u-muted" style="margin:0 0 var(--sp-2)">
           Deletes the raw model output, per-PDF audit files, and <code>coded_data.csv</code>/
-          <code>evidence.csv</code> — keeps the coding manual, coding sheet, and uploaded PDFs.
+          <code>evidence.csv</code> — keeps the coding manual, coding sheet, uploaded PDFs, and persistent audit history.
         </p>
         <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/clear-output"
               onsubmit="return confirm('Clear all generated data for this project? This cannot be undone.');">
@@ -894,8 +1055,9 @@
         {% endif %}
       </div>
 
-      <div>
-        <h3 style="margin:0 0 var(--sp-2); font-size:var(--text-sm); font-weight:600; color:var(--destructive)">Danger zone</h3>
+      <div class="danger-section">
+        <h3 style="margin:0 0 var(--sp-2); font-size:var(--text-sm); font-weight:600; color:var(--destructive)">Delete project</h3>
+        <p class="u-sm u-muted" style="margin-bottom:var(--sp-3)">Permanently remove this project, its source PDFs, all results, and audit history. Export the audit ZIP first if you need to retain it.</p>
         <form method="post" action="/{{ token }}/projects/{{ project.project_id }}/delete"
               onsubmit="return confirm('Delete this project and all its files? This cannot be undone.');">
           <button type="submit" class="btn" data-variant="destructive" data-size="sm" {% if is_running %}disabled{% endif %}>
@@ -906,5 +1068,7 @@
     </div>
   </section>
 
+  </div>
+  </div>
 </div>
 {% endblock %}

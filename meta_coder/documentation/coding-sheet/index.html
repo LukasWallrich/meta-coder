@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A practical guide to coding studies with MetaCoder.">
+  <title>Coding sheet · MetaCoder Guide</title>
+  <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../assets/vendor/basecoat.min.css">
+  <link rel="stylesheet" href="../assets/app.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="u-visually-hidden-focusable" href="#main">Skip to content</a>
+  <header class="app-bar">
+    <a class="app-bar-brand" href=".."><span class="app-bar-mark" aria-hidden="true">M</span>MetaCoder <span class="docs-brand-label">Guide</span></a>
+    <span class="app-bar-spacer"></span>
+    <a class="btn" data-variant="ghost" data-size="sm" id="back-to-app" hidden>Back to app</a>
+    <label class="u-visually-hidden" for="docs-theme">Theme</label>
+    <select id="docs-theme" class="select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </header>
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <details id="docs-navigation" open>
+        <summary>In this guide</summary>
+        <nav aria-label="Documentation">
+          <a href=".."><span class="docs-nav-number">01</span>Getting started</a><a href="../settings/"><span class="docs-nav-number">02</span>Connections and settings</a><a href="../analysis/"><span class="docs-nav-number">03</span>Define your analysis</a><a href="../manual/"><span class="docs-nav-number">04</span>Coding manual</a><a href="./" aria-current="page"><span class="docs-nav-number">05</span>Coding sheet</a><a href="../sources/"><span class="docs-nav-number">06</span>Source PDFs</a><a href="../matching/"><span class="docs-nav-number">07</span>PDF matching</a><a href="../run/"><span class="docs-nav-number">08</span>Run extraction</a><a href="../results/"><span class="docs-nav-number">09</span>Review and export</a><a href="../auditing/"><span class="docs-nav-number">10</span>Audit and reproducibility</a><a href="../projects/"><span class="docs-nav-number">11</span>Project settings</a><a href="../troubleshooting/"><span class="docs-nav-number">12</span>Troubleshooting</a>
+        </nav>
+      </details>
+      <p class="docs-local-note">Your workflow, step by step.<br>Available offline inside the app.</p>
+    </aside>
+    <main id="main" class="docs-article">
+      <p class="docs-eyebrow">METACODER / USER GUIDE</p>
+      <h1 id="coding-sheet">Coding sheet<a class="headerlink" href="#coding-sheet" title="Permanent link">&para;</a></h1>
+<p>The coding sheet specifies the effects to extract. Use one row per effect, experiment, or condition, even when several rows belong to the same PDF.</p>
+<p><a href="../assets/screenshots/coding-sheet.png"><img alt="A saved coding sheet with two effect rows" src="../assets/screenshots/coding-sheet.png" /></a></p>
+<h2 id="prepare-a-formatted-csv">Prepare a formatted CSV<a class="headerlink" href="#prepare-a-formatted-csv" title="Permanent link">&para;</a></h2>
+<p>Download the CSV template from <strong>Coding sheet</strong>, fill it in, and use <strong>Upload formatted CSV</strong>. Required columns are:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What to enter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>row_id</code></td>
+<td>A unique, stable ID for this effect, such as <code>study-01-exp-1</code></td>
+</tr>
+<tr>
+<td><code>source_pdf</code></td>
+<td>The exact uploaded filename, including <code>.pdf</code></td>
+</tr>
+<tr>
+<td><code>locator</code></td>
+<td>Where the effect is reported, such as “Experiment 1, Table 2, response time”</td>
+</tr>
+<tr>
+<td><code>authors</code></td>
+<td>The study authors</td>
+</tr>
+<tr>
+<td><code>year</code></td>
+<td>The publication year</td>
+</tr>
+</tbody>
+</table>
+<p>Optional <code>title</code> and <code>doi</code> columns help suggest PDF matches. Preserve the required column names. Use a UTF-8 CSV.</p>
+<pre><code class="language-csv">row_id,source_pdf,locator,authors,year
+study-01-exp-1,demo-study.pdf,&quot;Experiment 1, Table 2&quot;,Demo and Example,2024
+study-01-exp-2,demo-study.pdf,&quot;Experiment 2, Table 4&quot;,Demo and Example,2024
+</code></pre>
+<h2 id="convert-an-existing-sheet">Convert an existing sheet<a class="headerlink" href="#convert-an-existing-sheet" title="Permanent link">&para;</a></h2>
+<p>Choose <strong>AI conversion</strong> if your CSV uses another layout. Add notes explaining its columns or intended effect rows, choose the file, and select <strong>Convert to a draft</strong>. Conversion uses the saved manual and the global drafting model.</p>
+<p>Review the preview and warnings. Edit the CSV if necessary without changing the required headers, then choose <strong>Save converted sheet</strong>. Fill in missing authors and years before saving. Conversion accepts up to 2,000 source rows and 500,000 characters.</p>
+<h2 id="resolve-problems">Resolve problems<a class="headerlink" href="#resolve-problems" title="Permanent link">&para;</a></h2>
+<p>Duplicate row IDs and missing required values need to be fixed in the sheet. Missing or unrecognized PDF filenames can be resolved in <a href="../matching/">PDF matching</a> after uploading the studies.</p>
+<p>An unsaved converted draft leaves the current sheet and results intact. Saving a changed sheet clears previous extraction results.</p>
+      <nav class="docs-pagination" aria-label="Adjacent pages">
+        <a href="../manual/"><small>Previous</small>Coding manual ←</a>
+        <a href="../sources/"><small>Next</small>Source PDFs →</a>
+      </nav>
+    </main>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#prepare-a-formatted-csv">Prepare a formatted CSV</a><a href="#convert-an-existing-sheet">Convert an existing sheet</a><a href="#resolve-problems">Resolve problems</a></nav></aside>
+  </div>
+</body>
+</html>

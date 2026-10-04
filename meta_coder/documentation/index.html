@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A practical guide to coding studies with MetaCoder.">
+  <title>Getting started · MetaCoder Guide</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="assets/vendor/basecoat.min.css">
+  <link rel="stylesheet" href="assets/app.css">
+  <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+  <a class="u-visually-hidden-focusable" href="#main">Skip to content</a>
+  <header class="app-bar">
+    <a class="app-bar-brand" href="."><span class="app-bar-mark" aria-hidden="true">M</span>MetaCoder <span class="docs-brand-label">Guide</span></a>
+    <span class="app-bar-spacer"></span>
+    <a class="btn" data-variant="ghost" data-size="sm" id="back-to-app" hidden>Back to app</a>
+    <label class="u-visually-hidden" for="docs-theme">Theme</label>
+    <select id="docs-theme" class="select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </header>
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <details id="docs-navigation" open>
+        <summary>In this guide</summary>
+        <nav aria-label="Documentation">
+          <a href="." aria-current="page"><span class="docs-nav-number">01</span>Getting started</a><a href="settings/"><span class="docs-nav-number">02</span>Connections and settings</a><a href="analysis/"><span class="docs-nav-number">03</span>Define your analysis</a><a href="manual/"><span class="docs-nav-number">04</span>Coding manual</a><a href="coding-sheet/"><span class="docs-nav-number">05</span>Coding sheet</a><a href="sources/"><span class="docs-nav-number">06</span>Source PDFs</a><a href="matching/"><span class="docs-nav-number">07</span>PDF matching</a><a href="run/"><span class="docs-nav-number">08</span>Run extraction</a><a href="results/"><span class="docs-nav-number">09</span>Review and export</a><a href="auditing/"><span class="docs-nav-number">10</span>Audit and reproducibility</a><a href="projects/"><span class="docs-nav-number">11</span>Project settings</a><a href="troubleshooting/"><span class="docs-nav-number">12</span>Troubleshooting</a>
+        </nav>
+      </details>
+      <p class="docs-local-note">Your workflow, step by step.<br>Available offline inside the app.</p>
+    </aside>
+    <main id="main" class="docs-article">
+      <p class="docs-eyebrow">METACODER / USER GUIDE</p>
+      <h1 id="getting-started">Getting started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h1>
+<p>MetaCoder helps you code meta-analysis studies with an LLM and review the evidence behind each value. Start with a clear effect definition, a coding manual, and a sheet describing the effects you want from each PDF.</p>
+<p><a href="assets/screenshots/home.png"><img alt="The MetaCoder Projects page with a demonstration project" src="assets/screenshots/home.png" /></a></p>
+<h2 id="install-or-update">Install or update<a class="headerlink" href="#install-or-update" title="Permanent link">&para;</a></h2>
+<p>Install the latest stable <a href="https://github.com/shaheedazaad/meta-coder/releases/latest">GitHub release</a> using the commands below. Python and dependencies are managed automatically with Pixi.</p>
+<p><strong>macOS / Linux</strong> — run in a terminal:</p>
+<pre><code class="language-bash">curl -fsSL https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.sh | bash
+</code></pre>
+<p><strong>Windows</strong> — run in PowerShell:</p>
+<pre><code class="language-powershell">irm https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.ps1 | iex
+</code></pre>
+<p>Then run <code>meta-coder</code>. Follow the installer's PATH instructions if the command is not found.</p>
+<p>To update, stop MetaCoder, rerun the same installer, and start it again. Your projects, preferences, and saved API keys are kept. Export a project ZIP first if you want a backup. The app checks GitHub for a newer stable release when a page opens, caching the result for six hours. An available update appears as an informational banner; offline checks fail silently. Checks read public release metadata without a GitHub login; no project data or AI provider credentials are sent.</p>
+<p>For a specific version, set <code>META_CODER_VERSION</code> (for example, <code>0.1.0</code>) before running the installer. <code>META_CODER_RELEASE_BASE_URL</code> optionally overrides the download location for mirrors and testing.</p>
+<h2 id="start-from-source">Start from source<a class="headerlink" href="#start-from-source" title="Permanent link">&para;</a></h2>
+<p>From a source checkout, use <code>pixi run start</code>. If you use a Python environment instead, install with <code>pip install -e .</code> and run <code>python -m meta_coder</code>. The app opens a local browser window. Keep its terminal running while you work.</p>
+<p>Use <strong>Documentation</strong> in the app header to open this guide. Each project section also has a link to the relevant page. Documentation is bundled locally and does not require an internet connection.</p>
+<h2 id="your-first-project">Your first project<a class="headerlink" href="#your-first-project" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Enter a name on <strong>Projects</strong> and choose <strong>Create project</strong>.</li>
+<li><a href="settings/">Connect a provider</a> in global <strong>Settings</strong>.</li>
+<li><a href="analysis/">Define your analysis</a>: state exactly which comparison counts as an effect.</li>
+<li><a href="manual/">Build your coding manual</a>: define the fields and categories to extract.</li>
+<li><a href="coding-sheet/">Add a coding sheet</a>: identify each effect with a unique row ID and locator.</li>
+<li><a href="sources/">Upload source PDFs</a>, then <a href="matching/">review PDF matches</a>.</li>
+<li><a href="run/">Run extraction</a> with your selected provider and model.</li>
+<li><a href="results/">Review results and export</a>, checking coded values against their supporting evidence.</li>
+</ol>
+<blockquote>
+<p>Screenshots throughout this guide show a fictional demonstration project. They do not represent research findings or a live provider run.</p>
+</blockquote>
+<h2 id="where-your-work-lives">Where your work lives<a class="headerlink" href="#where-your-work-lives" title="Permanent link">&para;</a></h2>
+<p>Projects and non-secret preferences are stored on this computer. API keys are stored separately in the system credential store. AI actions send the relevant documents or extracted text to the provider you choose; local project storage does not make those requests offline.</p>
+<p>Use <a href="projects/">Project settings</a> to export a ZIP backup. The light, dark, or system theme preference is shared between the app and its bundled guide.</p>
+      <nav class="docs-pagination" aria-label="Adjacent pages">
+        
+        <a href="settings/"><small>Next</small>Connections and settings →</a>
+      </nav>
+    </main>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#install-or-update">Install or update</a><a href="#start-from-source">Start from source</a><a href="#your-first-project">Your first project</a><a href="#where-your-work-lives">Where your work lives</a></nav></aside>
+  </div>
+</body>
+</html>

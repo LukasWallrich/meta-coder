@@ -90,7 +90,7 @@ class CodingSheetIssue:
     row_number: int | None
     message: str
     # "pdf" for issues about a row's source_pdf not identifying an uploaded
-    # file (missing or unmatched) — the PDF identification tab's concern.
+    # file (missing or unmatched) — the PDF matching tab's concern.
     # "sheet" for everything else (shape/columns, row_id, other required
     # fields) — the Coding sheet tab's concern. Purely a display grouping;
     # `is_valid` treats every issue the same regardless of kind.

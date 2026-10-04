@@ -1,8 +1,7 @@
 """Secure API-key persistence in the operating system credential store.
 
 Every key accepted by MetaCoder is saved through python-keyring (macOS Keychain /
-Windows Credential Locker / Linux Secret Service) and verified with an immediate
-read-back. There is deliberately no session-only or plaintext-file fallback: if
+Windows Credential Locker / Linux Secret Service). There is deliberately no session-only or plaintext-file fallback: if
 secure persistence is unavailable, adding the key fails visibly.
 """
 
@@ -34,21 +33,15 @@ def _username(provider: str) -> str:
 
 
 def keyring_available() -> bool:
-    """Best-effort probe: a real round-trip (set + get + delete a throwaway
-    entry), since `keyring.get_keyring()` can return a backend object that
-    exists but doesn't actually work in this environment (e.g. no Secret
-    Service daemon running on a headless Linux box)."""
+    """Inspect the backend without touching Keychain or triggering authorization.
 
-    probe_user = "__meta_coder_probe__"
-    probe_value = "meta-coder-keyring-probe"
+    Actual read/write permissions are checked only when the user saves a key or runs an action that needs it.
+    A probe entry can require separate access permissions from the saved key.
+    """
     try:
-        keyring.set_password(_SERVICE_NAME, probe_user, probe_value)
-        retrieved = keyring.get_password(_SERVICE_NAME, probe_user)
-        keyring.delete_password(_SERVICE_NAME, probe_user)
-        return retrieved == probe_value
-    except keyring.errors.KeyringError:
-        return False
-    except Exception:  # noqa: BLE001 - a broken backend can raise almost anything
+        backend = keyring.get_keyring()
+        return float(getattr(backend, "priority", 0)) > 0
+    except Exception:
         return False
 
 
@@ -89,18 +82,18 @@ def mark_saved_key_configured(provider: str, configured: bool) -> bool:
 def save_key(provider: str, api_key: str) -> None:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider: {provider!r}")
+    api_key = api_key.strip()
+    if not api_key:
+        raise ValueError("Cannot save an empty API key.")
+    if not keyring_available():
+        raise CredentialStoreError("No operating-system credential store is available.")
     try:
         keyring.set_password(_SERVICE_NAME, _username(provider), api_key)
-        saved = keyring.get_password(_SERVICE_NAME, _username(provider))
     except Exception as exc:
         raise CredentialStoreError(
             "The OS credential store could not save the key. Check that Keychain or your "
             "system credential service is available, then try again."
         ) from exc
-    if saved != api_key:
-        raise CredentialStoreError(
-            "The OS credential store did not return the key after saving it. The key was not accepted."
-        )
     mark_saved_key_configured(provider, True)
 
 

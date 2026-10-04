@@ -51,8 +51,11 @@ def save_pdf_upload(
     destination = unique_destination(sources_dir, safe_name)
     partial = destination.with_name(destination.name + ".uploading")
     written = 0
+    owns_partial = False
     try:
-        with partial.open("xb") as handle:
+        handle = partial.open("xb")
+        owns_partial = True
+        with handle:
             while True:
                 chunk = stream.read(1024 * 1024)
                 if not chunk:
@@ -70,10 +73,11 @@ def save_pdf_upload(
                 raise ProjectError(f"{safe_name} is not a valid PDF.")
         partial.replace(destination)
     except Exception:
-        partial.unlink(missing_ok=True)
+        if owns_partial:
+            partial.unlink(missing_ok=True)
         raise
     return destination
 
 
 def list_uploaded_pdfs(sources_dir: Path) -> list[Path]:
-    return sorted(p for p in sources_dir.glob("*.pdf") if p.is_file())
+    return sorted(p for p in sources_dir.glob("*") if p.is_file() and p.suffix.lower() == ".pdf")

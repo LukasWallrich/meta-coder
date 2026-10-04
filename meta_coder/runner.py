@@ -8,6 +8,7 @@ configures otherwise on the project's Setup tab.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -21,6 +22,7 @@ from .coding_sheet import CodingSheet
 from .extraction import ExtractionResult
 from .manual import CodingManual
 from .projects import Project
+from .provenance import AuditOperation, audited_call, json_bytes
 from .providers import DEFAULT_PROVIDER, default_model, extract_pdf_effects
 from .results import collate_results, render_pdf_audit_yaml, rows_to_csv
 
@@ -33,11 +35,22 @@ def _safe_stem(source_pdf: str) -> str:
 
 
 def raw_json_path(project: Project, source_pdf: str) -> Path:
-    return project.raw_dir / f"{_safe_stem(source_pdf)}.json"
+    """Return the collision-resistant path for a PDF's raw result."""
+    digest = hashlib.sha256(source_pdf.encode("utf-8")).hexdigest()[:16]
+    return project.raw_dir / f"{_safe_stem(source_pdf)}-{digest}.json"
 
 
 def audit_yaml_path(project: Project, source_pdf: str) -> Path:
-    return project.audit_dir / f"{_safe_stem(source_pdf)}.yaml"
+    digest = hashlib.sha256(source_pdf.encode("utf-8")).hexdigest()[:16]
+    return project.audit_dir / f"{_safe_stem(source_pdf)}-{digest}.yaml"
+
+
+def raw_json_path_for_read(project: Project, source_pdf: str) -> Path:
+    """Resolve the new path first and fall back to pre-hash persisted data."""
+    canonical = raw_json_path(project, source_pdf)
+    if canonical.is_file():
+        return canonical
+    return project.raw_dir / f"{_safe_stem(source_pdf)}.json"
 
 
 def write_raw_result(project: Project, result: ExtractionResult, *, provider: str, model: str) -> None:
@@ -47,6 +60,7 @@ def write_raw_result(project: Project, result: ExtractionResult, *, provider: st
         json.dumps(
             {
                 "source_pdf": result.source_pdf,
+                "audit_operation_id": result.audit_operation_id,
                 "provider": provider,
                 "model": model,
                 "status": result.status,
@@ -75,6 +89,7 @@ def _result_from_raw_json(path: Path) -> ExtractionResult | None:
         return None
     return ExtractionResult(
         source_pdf=data["source_pdf"],
+        audit_operation_id=data.get("audit_operation_id"),
         status=data.get("status") or "error",
         coded_by_row_id=data.get("coded_by_row_id") or {},
         missing_ids=set(data.get("missing_ids") or []),
@@ -102,7 +117,10 @@ def load_persisted_results(project: Project) -> dict[str, ExtractionResult]:
     for path in project.raw_dir.glob("*.json"):
         result = _result_from_raw_json(path)
         if result is not None:
-            results[result.source_pdf] = result
+            # Prefer the canonical collision-resistant record when both it and
+            # a legacy lossy-stem record exist for the same source PDF.
+            if path == raw_json_path(project, result.source_pdf) or result.source_pdf not in results:
+                results[result.source_pdf] = result
     return results
 
 
@@ -152,6 +170,7 @@ class RunState:
     finished_at: float | None = None
     cancel_requested: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    audit_run: AuditOperation | None = field(default=None, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -216,6 +235,8 @@ class Runner:
         service_tier: str | None = None,
         reasoning_effort: str = "",
         only_pdfs: list[str] | None = None,
+        base_url: str = "",
+        response_format: str = "json_schema",
     ) -> RunState:
         """`only_pdfs`, when given, restricts the run to that subset of the
         coding sheet's PDFs (todo.md step 11's retry: reprocess only
@@ -249,6 +270,15 @@ class Runner:
             pdfs=[PdfProgress(source_pdf=name) for name in pdf_names],
             started_at=time.time(),
         )
+        state.audit_run = AuditOperation(project, "extraction_run", {
+            "provider": provider, "model": model, "parallel_requests": parallel_requests,
+            "request_delay_sec": request_delay_sec, "timeout_sec": request_timeout_sec,
+            "service_tier": service_tier, "reasoning_effort": reasoning_effort,
+            "base_url": base_url, "response_format": response_format,
+            "selected_pdfs": pdf_names, "retry_selection": only_pdfs,
+        }, secrets=(api_key,))
+        state.audit_run.input("effective_manual.json", json_bytes(manual))
+        state.audit_run.input("effective_coding_sheet.json", json_bytes(coding_sheet))
         with self._lock:
             self._states[project.project_id] = state
 
@@ -267,6 +297,8 @@ class Runner:
                 request_timeout_sec,
                 service_tier,
                 reasoning_effort,
+                base_url,
+                response_format,
             ),
             daemon=True,
         )
@@ -287,6 +319,8 @@ class Runner:
         request_timeout_sec: int | None,
         service_tier: str | None,
         reasoning_effort: str,
+        base_url: str,
+        response_format: str,
     ) -> None:
         # Seed from prior attempts (see `_load_existing_results`) so a partial run
         # — a retry of a few PDFs, or a run cancelled midway — upserts over the
@@ -296,6 +330,8 @@ class Runner:
         results_lock = threading.Lock()
         pacer = _RequestPacer(request_delay_sec)
         provider_kwargs: dict[str, object] = {}
+        if provider == "openai_compatible":
+            provider_kwargs.update(base_url=base_url, response_format=response_format)
         if service_tier:
             provider_kwargs["service_tier"] = service_tier
         if reasoning_effort:
@@ -317,7 +353,11 @@ class Runner:
                         progress.status = "cancelled"
                         state.processed += 1
                     return
-                result = extract_pdf_effects(
+                result = audited_call(
+                    project, "extraction", extract_pdf_effects,
+                    audit_inputs={"run_coding_sheet.json": json_bytes(coding_sheet)},
+                    audit_settings={"parallel_requests": parallel_requests, "request_delay_sec": request_delay_sec,
+                                    "run_id": state.audit_run.id if state.audit_run else None},
                     provider=provider,
                     pdf_path=pdf_path,
                     manual=manual,
@@ -377,9 +417,20 @@ class Runner:
             (project.output_dir / "evidence.csv").write_text(
                 rows_to_csv(evidence_rows, manual), encoding="utf-8"
             )
-            state.status = "cancelled" if state.cancel_requested else "complete"
+            if state.audit_run:
+                for name in ("coded_data.csv", "evidence.csv"):
+                    state.audit_run.input(name, (project.output_dir / name).read_bytes())
+                state.audit_run.input("final_results.json", json_bytes(results_by_pdf))
+            terminal_status = "cancelled" if state.cancel_requested else "complete"
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
-            state.status = "failed"
+            terminal_status = "failed"
             state.error = str(exc)
         finally:
             state.finished_at = time.time()
+            if state.audit_run:
+                try:
+                    state.audit_run.finish(result={**state.snapshot(), "status": terminal_status}, status=terminal_status)
+                except OSError as exc:
+                    terminal_status = "failed"
+                    state.error = f"Could not finalize audit history: {exc}"
+            state.status = terminal_status

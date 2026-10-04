@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A practical guide to coding studies with MetaCoder.">
+  <title>Define your analysis · MetaCoder Guide</title>
+  <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../assets/vendor/basecoat.min.css">
+  <link rel="stylesheet" href="../assets/app.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="u-visually-hidden-focusable" href="#main">Skip to content</a>
+  <header class="app-bar">
+    <a class="app-bar-brand" href=".."><span class="app-bar-mark" aria-hidden="true">M</span>MetaCoder <span class="docs-brand-label">Guide</span></a>
+    <span class="app-bar-spacer"></span>
+    <a class="btn" data-variant="ghost" data-size="sm" id="back-to-app" hidden>Back to app</a>
+    <label class="u-visually-hidden" for="docs-theme">Theme</label>
+    <select id="docs-theme" class="select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </header>
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <details id="docs-navigation" open>
+        <summary>In this guide</summary>
+        <nav aria-label="Documentation">
+          <a href=".."><span class="docs-nav-number">01</span>Getting started</a><a href="../settings/"><span class="docs-nav-number">02</span>Connections and settings</a><a href="./" aria-current="page"><span class="docs-nav-number">03</span>Define your analysis</a><a href="../manual/"><span class="docs-nav-number">04</span>Coding manual</a><a href="../coding-sheet/"><span class="docs-nav-number">05</span>Coding sheet</a><a href="../sources/"><span class="docs-nav-number">06</span>Source PDFs</a><a href="../matching/"><span class="docs-nav-number">07</span>PDF matching</a><a href="../run/"><span class="docs-nav-number">08</span>Run extraction</a><a href="../results/"><span class="docs-nav-number">09</span>Review and export</a><a href="../auditing/"><span class="docs-nav-number">10</span>Audit and reproducibility</a><a href="../projects/"><span class="docs-nav-number">11</span>Project settings</a><a href="../troubleshooting/"><span class="docs-nav-number">12</span>Troubleshooting</a>
+        </nav>
+      </details>
+      <p class="docs-local-note">Your workflow, step by step.<br>Available offline inside the app.</p>
+    </aside>
+    <main id="main" class="docs-article">
+      <p class="docs-eyebrow">METACODER / USER GUIDE</p>
+      <h1 id="define-your-analysis">Define your analysis<a class="headerlink" href="#define-your-analysis" title="Permanent link">&para;</a></h1>
+<p>The effect definition tells the model which comparison to code. Write it before you create fields or run extraction; a blank definition leaves the manual incomplete.</p>
+<p><a href="../assets/screenshots/analysis.png"><img alt="An analysis name and effect definition in the project editor" src="../assets/screenshots/analysis.png" /></a></p>
+<h2 id="describe-the-comparison">Describe the comparison<a class="headerlink" href="#describe-the-comparison" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Open <strong>Define your analysis</strong> in the project sidebar.</li>
+<li>Enter the analysis name and an optional description.</li>
+<li>Write an <strong>Effect definition</strong> that identifies the outcome and comparison.</li>
+<li>Choose <strong>Validate and save</strong>.</li>
+</ol>
+<p>For example: “The difference in response time between incongruent and congruent trials, separately for each experiment.” This gives the coding fields a common reference point. Use each coding-sheet row's locator to distinguish experiments, outcomes, or conditions within a paper.</p>
+<h2 id="save-before-moving-on">Save before moving on<a class="headerlink" href="#save-before-moving-on" title="Permanent link">&para;</a></h2>
+<p>The analysis definition and <a href="../manual/">coding fields</a> are part of the same saved manual. Save edits before running extraction. Saving a changed manual clears existing extraction results, so <a href="../results/">export results</a> first if you need to preserve an earlier run.</p>
+      <nav class="docs-pagination" aria-label="Adjacent pages">
+        <a href="../settings/"><small>Previous</small>Connections and settings ←</a>
+        <a href="../manual/"><small>Next</small>Coding manual →</a>
+      </nav>
+    </main>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#describe-the-comparison">Describe the comparison</a><a href="#save-before-moving-on">Save before moving on</a></nav></aside>
+  </div>
+</body>
+</html>

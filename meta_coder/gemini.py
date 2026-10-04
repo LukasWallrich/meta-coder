@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheetRow
+from .provenance import audited_transport
 from .extraction import (
     ExtractionCancelled,
     ExtractionResult,
@@ -77,7 +78,7 @@ def check_model(model: str, *, api_key: str, timeout_sec: int = 20) -> list[str]
     """Confirm a Gemini model exists and accepts generateContent before saving it."""
 
     if not api_key:
-        return ["Set or unlock a Gemini API key before validating a model."]
+        return ["Save a Gemini API key before validating a model."]
     name = model.strip()
     if not name:
         return ["Enter a Gemini model name."]
@@ -130,10 +131,16 @@ def _call_gemini_parts(
         method="POST",
     )
     try:
-        raw_body = cancellable_urlopen(
+        raw_body = audited_transport(cancellable_urlopen,
             request, timeout=timeout_sec, cancel_event=cancel_event or threading.Event()
         )
-        body = json.loads(raw_body.decode("utf-8"))
+        raw_response = raw_body.decode("utf-8", errors="replace")
+        try:
+            body = json.loads(raw_response)
+        except json.JSONDecodeError as exc:
+            raise ProviderError(
+                f"Gemini returned invalid response JSON: {exc}", raw_response=raw_response
+            ) from exc
     except urllib.error.HTTPError as exc:
         detail = _redact(exc.read().decode("utf-8", errors="replace"), api_key)
         raise ProviderError(f"Gemini API error ({exc.code}): {detail}") from exc
@@ -142,11 +149,27 @@ def _call_gemini_parts(
             raise ExtractionCancelled("Extraction cancelled by user.") from exc
         raise ProviderError(f"Could not reach Gemini: {_redact(str(exc.reason), api_key)}") from exc
 
+    if not isinstance(body, dict):
+        raise ProviderError("Gemini returned an invalid response object.", raw_response=raw_response)
     candidates = body.get("candidates") or []
+    if not isinstance(candidates, list):
+        raise ProviderError("Gemini returned invalid candidates.", raw_response=raw_response)
     parts = []
     for candidate in candidates:
-        for part in ((candidate.get("content") or {}).get("parts") or []):
+        if not isinstance(candidate, dict):
+            raise ProviderError("Gemini returned an invalid candidate.", raw_response=raw_response)
+        content = candidate.get("content") or {}
+        if not isinstance(content, dict):
+            raise ProviderError("Gemini returned invalid candidate content.", raw_response=raw_response)
+        candidate_parts = content.get("parts") or []
+        if not isinstance(candidate_parts, list):
+            raise ProviderError("Gemini returned invalid content parts.", raw_response=raw_response)
+        for part in candidate_parts:
+            if not isinstance(part, dict):
+                raise ProviderError("Gemini returned an invalid content part.", raw_response=raw_response)
             if "text" in part:
+                if not isinstance(part["text"], str):
+                    raise ProviderError("Gemini returned invalid text content.", raw_response=raw_response)
                 parts.append(part["text"])
     text = "".join(parts)
     if not text.strip():
@@ -154,6 +177,12 @@ def _call_gemini_parts(
         raise ProviderError(f"Gemini returned no text (finishReason: {finish_reason}).")
 
     usage = body.get("usageMetadata") or {}
+    if not isinstance(usage, dict):
+        raise ProviderError("Gemini returned invalid usage metadata.", raw_response=raw_response)
+    for field in ("promptTokenCount", "candidatesTokenCount"):
+        value = usage.get(field)
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+            raise ProviderError("Gemini returned invalid usage metadata.", raw_response=raw_response)
     tokens = {
         "input_tokens": usage.get("promptTokenCount"),
         "output_tokens": usage.get("candidatesTokenCount"),

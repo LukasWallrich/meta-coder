@@ -198,9 +198,11 @@ def project_archive_files(project: Project) -> list[tuple[Path, str]]:
         return []
     files: list[tuple[Path, str]] = []
     for path in sorted(project.path.rglob("*")):
-        if not path.is_file():
+        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(project.path.resolve()):
             continue
         rel = path.relative_to(project.path)
+        if path.name.endswith(".tmp"):
+            continue
         if rel.parts and rel.parts[0] == ".meta_coder":
             continue
         files.append((path, str(rel)))

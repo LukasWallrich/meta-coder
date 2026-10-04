@@ -1,10 +1,55 @@
+import asyncio
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 from meta_coder.pdf_matching import apply_source_pdf_matches, score_pair as real_score_pair
 from meta_coder.projects import create_project
-from meta_coder.web import Runtime, _project_view
+from meta_coder.web import Runtime, _project_view, create_app
+
+
+def test_view_raw_output_renders_stored_response(tmp_path):
+    project = create_project("Raw Output Test", root=tmp_path)
+    (project.raw_dir / "response.json").write_text(
+        '{"answer": "Stored model response"}', encoding="utf-8"
+    )
+    with patch("meta_coder.web.credentials.saved_key_configured", return_value=False):
+        app = create_app(token="test-token", projects_root=tmp_path)
+
+    async def get_raw_output():
+        messages = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        await app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.4"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": f"/test-token/projects/{project.project_id}/raw/response.json",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [(b"host", b"localhost")],
+                "server": ("localhost", 80),
+            },
+            receive,
+            send,
+        )
+        return messages
+
+    messages = asyncio.run(get_raw_output())
+    response = next(message for message in messages if message["type"] == "http.response.start")
+    body = b"".join(message.get("body", b"") for message in messages).decode()
+    assert response["status"] == 200
+    assert "Raw model output" in body
+    assert "Stored model response" in body
+    assert f"/test-token/projects/{project.project_id}?tab=results" in body
 
 
 def _project_with_unmatched_rows(tmp_path: Path):

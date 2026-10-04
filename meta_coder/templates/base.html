@@ -37,7 +37,7 @@
 
     <span class="app-bar-spacer"></span>
 
-    <span class="badge" data-variant="outline" title="Projects and API keys are stored on this computer">Local</span>
+    <a class="btn" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/" target="_blank" rel="noopener">Documentation<span class="u-visually-hidden"> (opens in a new tab)</span></a>
 
     <a class="btn" data-variant="ghost" data-size="sm" href="/{{ token }}/settings">
       Settings
@@ -61,8 +61,16 @@
     </div>
   </header>
 
+  <div class="page" id="update-notice" data-check-url="/{{ token }}/updates" hidden>
+    <div class="alert" data-variant="info" role="status">
+      <h2><a href="/{{ token }}/docs/#install-or-update" target="_blank" rel="noopener">MetaCoder <span data-update-version></span> is available</a></h2>
+      <section>Stop MetaCoder and rerun the installer command to update.</section>
+    </div>
+  </div>
+
   <main id="main">{% block content %}{% endblock %}</main>
 
   <script src="/{{ token }}/static/app.js" defer></script>
+  <script src="/{{ token }}/static/updates.js" defer></script>
 </body>
 </html>

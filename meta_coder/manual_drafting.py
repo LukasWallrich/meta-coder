@@ -1,4 +1,4 @@
-"""Draft a coding manual from an uploaded PDF or DOCX document.
+"""Draft a coding manual from an uploaded PDF, DOCX, RTF, or Markdown document.
 
 This module owns the two trust boundaries in that workflow: extracting bounded
 plain text from an untrusted upload, and validating the model's structured draft
@@ -11,16 +11,18 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import re
 from typing import Any, BinaryIO
 
 from docx import Document
 from pypdf import PdfReader
+from striprtf.striprtf import rtf_to_text
 
 from .extraction import ProviderError, parse_json_response
 from .manual import CodingManual, ManualError, manual_from_editor_payload
 
 
-SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".docx"}
+SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".rtf", ".md"}
 MAX_EXTRACTED_TEXT_CHARS = 500_000
 
 
@@ -84,16 +86,40 @@ def _docx_text(data: bytes) -> str:
     return "\n".join(parts)
 
 
+def _rtf_text(data: bytes) -> str:
+    if not data.startswith(b"{\\rtf"):
+        raise ManualDraftError("The uploaded file is not a valid RTF document.")
+    try:
+        # Express raw non-ASCII bytes as RTF escapes so the parser decodes them
+        # using the document's code page, just like existing hex escapes.
+        escaped = re.sub(rb"[\x80-\xff]", lambda match: f"\\'{match[0][0]:02x}".encode("ascii"), data)
+        return rtf_to_text(escaped.decode("ascii"))
+    except Exception as exc:
+        raise ManualDraftError(f"The RTF document could not be read: {exc}") from exc
+
+
+def _markdown_text(data: bytes) -> str:
+    try:
+        # Keep headings, lists, and tables as written; the model reads Markdown.
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ManualDraftError("The Markdown document must be saved as UTF-8 text.") from exc
+    if "\x00" in text:
+        raise ManualDraftError("The uploaded file is not a valid Markdown text document.")
+    return text
+
+
 def extract_manual_document_text(
     stream: BinaryIO, filename: str, *, max_bytes: int
 ) -> str:
-    """Validate an uploaded PDF/DOCX and return bounded, non-empty plain text."""
+    """Validate an uploaded manual and return bounded, non-empty text."""
 
     suffix = Path(filename.replace("\\", "/")).suffix.lower()
     if suffix not in SUPPORTED_DOCUMENT_SUFFIXES:
-        raise ManualDraftError("Upload a PDF or DOCX coding-manual document.")
+        raise ManualDraftError("Upload a PDF, DOCX, RTF, or Markdown (.md) coding-manual document.")
     data = _read_bounded(stream, max_bytes=max_bytes)
-    text = pdf_text(data) if suffix == ".pdf" else _docx_text(data)
+    extractors = {".pdf": pdf_text, ".docx": _docx_text, ".rtf": _rtf_text, ".md": _markdown_text}
+    text = extractors[suffix](data)
     text = text.strip()
     if not text:
         raise ManualDraftError(
@@ -125,6 +151,9 @@ Schema rules:
   self-contained coding instruction in description, evidence_required, and levels.
 - Use levels only for categorical string fields. Preserve every documented category
   label and its meaning. Otherwise return an empty levels array.
+- Numbered categories (e.g. 1 = spatial, 2 = temporal) are string fields with
+  string labels "1" and "2", not integer fields. Any field with a non-empty levels
+  array must have type "string". Numeric measurements and booleans use levels: [].
 - Set evidence_required true unless the field is explicitly not sourced from the
   research article.
 - Do not add a notes field; MetaCoder adds its standard notes field automatically.
@@ -198,6 +227,20 @@ def parse_manual_draft_response(raw_text: str) -> CodingManual:
 
     try:
         payload, _repaired = parse_json_response(raw_text)
+        # Models sometimes call numbered categories integers (or yes/no
+        # categories booleans). Categories are strings in our editor/schema.
+        # Preserve their labels and instructions in the reviewable draft instead
+        # of dropping levels to make the model's suggested type validate.
+        effects = payload.get("effects") if isinstance(payload, dict) else None
+        if isinstance(effects, list):
+            for field in effects:
+                if (
+                    isinstance(field, dict)
+                    and str(field.get("type", "")).strip().lower() in {"number", "integer", "boolean"}
+                    and isinstance(field.get("levels"), list)
+                    and field["levels"]
+                ):
+                    field["type"] = "string"
         return manual_from_editor_payload(payload)
     except (ProviderError, ManualError) as exc:
         raise ManualDraftError(f"The model returned an invalid coding-manual draft: {exc}") from exc

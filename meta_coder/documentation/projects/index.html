@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A practical guide to coding studies with MetaCoder.">
+  <title>Project settings · MetaCoder Guide</title>
+  <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../assets/vendor/basecoat.min.css">
+  <link rel="stylesheet" href="../assets/app.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="u-visually-hidden-focusable" href="#main">Skip to content</a>
+  <header class="app-bar">
+    <a class="app-bar-brand" href=".."><span class="app-bar-mark" aria-hidden="true">M</span>MetaCoder <span class="docs-brand-label">Guide</span></a>
+    <span class="app-bar-spacer"></span>
+    <a class="btn" data-variant="ghost" data-size="sm" id="back-to-app" hidden>Back to app</a>
+    <label class="u-visually-hidden" for="docs-theme">Theme</label>
+    <select id="docs-theme" class="select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </header>
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <details id="docs-navigation" open>
+        <summary>In this guide</summary>
+        <nav aria-label="Documentation">
+          <a href=".."><span class="docs-nav-number">01</span>Getting started</a><a href="../settings/"><span class="docs-nav-number">02</span>Connections and settings</a><a href="../analysis/"><span class="docs-nav-number">03</span>Define your analysis</a><a href="../manual/"><span class="docs-nav-number">04</span>Coding manual</a><a href="../coding-sheet/"><span class="docs-nav-number">05</span>Coding sheet</a><a href="../sources/"><span class="docs-nav-number">06</span>Source PDFs</a><a href="../matching/"><span class="docs-nav-number">07</span>PDF matching</a><a href="../run/"><span class="docs-nav-number">08</span>Run extraction</a><a href="../results/"><span class="docs-nav-number">09</span>Review and export</a><a href="../auditing/"><span class="docs-nav-number">10</span>Audit and reproducibility</a><a href="./" aria-current="page"><span class="docs-nav-number">11</span>Project settings</a><a href="../troubleshooting/"><span class="docs-nav-number">12</span>Troubleshooting</a>
+        </nav>
+      </details>
+      <p class="docs-local-note">Your workflow, step by step.<br>Available offline inside the app.</p>
+    </aside>
+    <main id="main" class="docs-article">
+      <p class="docs-eyebrow">METACODER / USER GUIDE</p>
+      <h1 id="project-settings">Project settings<a class="headerlink" href="#project-settings" title="Permanent link">&para;</a></h1>
+<p>Use <strong>Project settings</strong> in the sidebar to export files, clear generated data, or delete a project. These controls apply to the current project.</p>
+<p><a href="../assets/screenshots/projects.png"><img alt="Project export, generated-data cleanup, and deletion controls" src="../assets/screenshots/projects.png" /></a></p>
+<h2 id="export-a-backup">Export a backup<a class="headerlink" href="#export-a-backup" title="Permanent link">&para;</a></h2>
+<p>Choose <strong>Download project and audit</strong> to preserve project files and the <a href="../auditing/">audit history</a>, with checksums. You can also open the project folder on your computer to inspect its manual, coding sheet, sources, and generated output.</p>
+<p>Make a backup before changing a completed coding manual or coding sheet, or before clearing generated data.</p>
+<h2 id="clear-generated-data">Clear generated data<a class="headerlink" href="#clear-generated-data" title="Permanent link">&para;</a></h2>
+<p>Clearing output removes working extraction results while retaining the project's inputs and persistent audit history. Use this when you deliberately want to reprocess the studies. Export any results you need before confirming.</p>
+<h2 id="delete-a-project">Delete a project<a class="headerlink" href="#delete-a-project" title="Permanent link">&para;</a></h2>
+<p>Deleting a project removes its stored files, including its audit history. This is different from clearing only generated output. Read the confirmation carefully and keep a ZIP backup if the work may be needed again.</p>
+<h2 id="data-locations">Data locations<a class="headerlink" href="#data-locations" title="Permanent link">&para;</a></h2>
+<p>By default, app data is stored under:</p>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td><code>~/Library/Application Support/Meta-Coder</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>%LOCALAPPDATA%/Meta-Coder</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>$XDG_DATA_HOME/meta-coder</code>, or <code>~/.local/share/meta-coder</code></td>
+</tr>
+</tbody>
+</table>
+<p>Projects are in the <code>projects</code> subdirectory. The <code>META_CODER_HOME</code> environment variable can override the app data location. API keys live separately in the operating system credential store.</p>
+      <nav class="docs-pagination" aria-label="Adjacent pages">
+        <a href="../auditing/"><small>Previous</small>Audit and reproducibility ←</a>
+        <a href="../troubleshooting/"><small>Next</small>Troubleshooting →</a>
+      </nav>
+    </main>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#export-a-backup">Export a backup</a><a href="#clear-generated-data">Clear generated data</a><a href="#delete-a-project">Delete a project</a><a href="#data-locations">Data locations</a></nav></aside>
+  </div>
+</body>
+</html>

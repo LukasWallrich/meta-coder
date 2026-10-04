@@ -13,10 +13,13 @@ dependencies = [
     "json-repair>=0.30",
     "pypdf>=5.0",
     "python-docx>=1.1",
+    "striprtf>=0.0.29",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov>=7.0", "httpx>=0.28"]
+docs = ["mkdocs==1.6.1"]
+docs-screenshots = ["playwright>=1.51,<2", "httpx>=0.28"]
 
 [project.scripts]
 meta-coder = "meta_coder.__main__:main"
@@ -29,7 +32,7 @@ build-backend = "setuptools.build_meta"
 include = ["meta_coder*"]
 
 [tool.setuptools.package-data]
-meta_coder = ["templates/*.html", "static/*", "config/*.yml"]
+meta_coder = ["templates/*.html", "static/*", "config/*.yml", "static/vendor/*", "documentation/**/*", "documentation/*"]
 
 # todo.md step 20: locked-environment packaging so end users don't install
 # Python/dependencies separately. `pixi install` materializes a `.pixi/` env
@@ -55,6 +58,18 @@ dev = { features = ["dev"], solve-group = "default" }
 
 [tool.pixi.feature.dev.pypi-dependencies]
 pytest = ">=8.0"
+pytest-cov = ">=7.0"
+httpx = ">=0.28"
 
 [tool.pixi.feature.dev.tasks]
 test = "pytest"
+coverage = "pytest --cov=meta_coder --cov-branch --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+branch = true
+source = ["meta_coder"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+precision = 2

@@ -17,7 +17,7 @@ def test_unmatched_source_pdf_is_a_loud_blocking_issue():
     assert not sheet.is_valid
     assert not sheet.rows
     assert "missing.pdf" in sheet.issues[0].message
-    # Unmatched/missing source_pdf is a "pdf" issue (the PDF identification
+    # Unmatched/missing source_pdf is a "pdf" issue (the PDF matching
     # tab's concern) — everything else is a "sheet" issue.
     assert sheet.issues[0].kind == "pdf"
     assert sheet.pdf_issues == sheet.issues
@@ -96,3 +96,21 @@ def test_missing_authors_or_year_is_a_loud_blocking_issue():
     sheet = parse_coding_sheet_csv(csv_text, uploaded_filenames={"paper.pdf"})
     assert not sheet.is_valid
     assert "authors" in sheet.issues[0].message
+
+
+def test_empty_ids_and_year_are_reported():
+    from meta_coder.coding_sheet import parse_coding_sheet_csv
+    sheet = parse_coding_sheet_csv('row_id,source_pdf,locator,authors,year\n,p.pdf,exp,Smith,2024\nr2,p.pdf,exp,Smith,\n', uploaded_filenames={'p.pdf'})
+    assert sheet.rows == []
+    assert [issue.row_number for issue in sheet.issues] == [2, 3]
+    assert 'row_id is required' in sheet.issues[0].message
+    assert 'no year' in sheet.issues[1].message
+
+
+def test_missing_and_blank_sheet_files_are_empty(tmp_path):
+    from meta_coder.coding_sheet import read_coding_sheet
+    path = tmp_path / 'sheet.csv'
+    assert read_coding_sheet(path, uploaded_filenames=set()).rows == []
+    path.write_text(' \n')
+    sheet = read_coding_sheet(path, uploaded_filenames=set())
+    assert sheet.rows == [] and sheet.issues == []

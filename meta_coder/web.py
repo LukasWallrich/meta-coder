@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from html import escape
 import json
+import hashlib
 import re
 import secrets
 import socket
@@ -12,7 +14,7 @@ import threading
 import webbrowser
 import zipfile
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
@@ -21,10 +23,15 @@ from markupsafe import Markup
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.staticfiles import StaticFiles
 
+from .updates import UpdateChecker
 from . import credentials
-from .app_settings import AppSettings, load_app_settings, save_app_settings
+from .provenance import audited_call, export_manifest, json_bytes
+from .app_settings import AppSettings, endpoint_options, load_app_settings, save_app_settings
+from .openai_compatible import normalize_base_url
 from .coding_sheet import coding_sheet_template_csv, read_coding_sheet
+from .coding_sheet_drafting import CodingSheetDraftError, read_source_csv, validate_sheet_csv
 from .pdf_matching import (
     PdfScanner,
     apply_source_pdf_matches,
@@ -58,8 +65,8 @@ from .projects import (
     reset_manual_to_default,
     write_manual,
 )
-from .providers import PROVIDER_LABELS, PROVIDERS, check_model, default_model, draft_coding_manual
-from .runner import Runner, load_persisted_results, raw_json_path
+from .providers import PROVIDER_LABELS, PROVIDERS, check_model, default_model, draft_coding_manual, draft_coding_sheet
+from .runner import Runner, load_persisted_results, raw_json_path_for_read
 from .settings import REASONING_EFFORTS, RunSettings, load_run_settings, save_run_settings
 from .uploads import ProjectError as UploadProjectError  # re-export alias, same type
 from .uploads import list_uploaded_pdfs, save_pdf_upload
@@ -99,8 +106,12 @@ def _highlight_yaml(text: str) -> Markup:
     return Markup("\n".join(rendered))
 
 
-PAGE_SIZE = 20
+PAGE_SIZE = 10
 RUN_SORT_COLUMNS = {"source_pdf", "authors", "year", "status", "input_tokens", "output_tokens"}
+
+# GROBID support remains implemented for future use, but its server setting is
+# not ready to expose in the regular Settings UI.
+GROBID_SETTINGS_ENABLED = False
 
 
 RETRYABLE_STATUSES = {"error", "needs_review", "cancelled"}
@@ -120,7 +131,7 @@ def _run_table_rows(results, coding_sheet, project: Project) -> list[dict]:
     rows = []
     for pdf in results:
         sheet_row = first_row_by_pdf.get(pdf.source_pdf)
-        raw_path = raw_json_path(project, pdf.source_pdf)
+        raw_path = raw_json_path_for_read(project, pdf.source_pdf)
         rows.append(
             {
                 "source_pdf": pdf.source_pdf,
@@ -166,6 +177,25 @@ def _paginate(rows: list, page: int, *, page_size: int = PAGE_SIZE):
     return rows[start : start + page_size], page, total_pages
 
 
+def _home_view(projects: list[Project], *, q: str = "", sort: str = "newest", page: int = 1) -> dict:
+    q = q.strip()
+    sort = sort if sort in {"newest", "oldest", "name"} else "newest"
+    matching = [project for project in projects if q.casefold() in project.name.casefold()]
+    if sort == "name":
+        matching.sort(key=lambda project: (project.name.casefold(), project.project_id))
+    else:
+        matching.sort(key=lambda project: (project.created_at, project.project_id), reverse=sort == "newest")
+    page_projects, page, total_pages = _paginate(matching, page)
+    pdf_counts = {project.project_id: len(list_uploaded_pdfs(project.sources_dir)) for project in page_projects}
+    return {
+        "projects": page_projects, "total_projects": len(projects), "matching_count": len(matching),
+        "pdf_counts": pdf_counts, "q": q, "sort": sort,
+        "page": page, "total_pages": total_pages,
+        "first_project": (page - 1) * PAGE_SIZE + 1 if matching else 0,
+        "last_project": min(page * PAGE_SIZE, len(matching)),
+    }
+
+
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_DIR / "templates"))
 STATIC_DIR = PACKAGE_DIR / "static"
@@ -191,7 +221,7 @@ class LocalSecurityMiddleware(BaseHTTPMiddleware):
 class Runtime:
     """One API key slot per provider (todo.md step 9: a second provider means a
     second key). Every accepted key is persisted in the OS credential store;
-    saved keys remain locked until explicitly unlocked for this session."""
+    saved keys are loaded only in response to a user action that needs them."""
 
     def __init__(self, projects_root: Path | None = None) -> None:
         self.projects_root = projects_root
@@ -208,8 +238,40 @@ class Runtime:
     def api_key(self, provider: str) -> str | None:
         return self._session_keys.get(provider)
 
+    def provider_setup_error(self, provider: str, model: str | None = None) -> str | None:
+        label = PROVIDER_LABELS.get(provider, provider)
+        if provider == "openai_compatible":
+            try:
+                normalize_base_url(load_app_settings().openai_base_url)
+            except ValueError:
+                return "Set a valid OpenAI-compatible API base URL in global Settings."
+        if model is not None and not model.strip():
+            return f"Enter a model ID for {label}."
+        if not self.api_key(provider) and not self.has_saved_key(provider):
+            if provider != "openai_compatible":
+                return f"Save a {label} API key in global Settings."
+        return None
+
+    def provider_ready(self, provider: str) -> bool:
+        return self.provider_setup_error(provider) is None
+
     def has_saved_key(self, provider: str) -> bool:
         return provider in self._saved_keys
+
+    def prepare_provider(self, provider: str, model: str) -> str | None:
+        """Load saved keys for an explicit provider action, never for page rendering."""
+        error = self.provider_setup_error(provider, model)
+        if error:
+            return error
+        try:
+            for saved_provider in PROVIDERS:
+                if self.has_saved_key(saved_provider) and not self.api_key(saved_provider):
+                    found = self.unlock_key(saved_provider)
+                    if saved_provider == provider and not found:
+                        return "The saved API key is no longer in the credential store. Save it again in Settings."
+        except credentials.CredentialStoreError as exc:
+            return str(exc)
+        return self.provider_setup_error(provider, model)
 
     def unlock_key(self, provider: str) -> bool:
         key = credentials.load_key(provider)
@@ -225,7 +287,7 @@ class Runtime:
         return True
 
     def set_api_key(self, provider: str, key: str) -> None:
-        # Persist and verify first. A key that cannot survive restart is never
+        # Persist first. A key that cannot survive restart is never
         # silently accepted as session-only.
         credentials.save_key(provider, key)
         self._session_keys[provider] = key
@@ -240,7 +302,7 @@ class Runtime:
         """For the global nav badge (base.html), which just needs "is there
         something set" — per-project/per-provider detail lives on the pages
         that actually care (the project's Run tab, the Settings page)."""
-        return bool(self._session_keys)
+        return bool(self._session_keys or self._saved_keys)
 
 
 def _project_view(
@@ -255,6 +317,7 @@ def _project_view(
     id_saved_page: int = 1,
     id_orphans_page: int = 1,
     sources_page: int = 1,
+    sheet_page: int = 1,
 ) -> dict:
     """Everything the project page template needs, recomputed fresh on every
     render — including coding-sheet validation, which must reflect the CURRENT
@@ -364,16 +427,19 @@ def _project_view(
         orphan_pdfs, id_orphans_page
     )
     sources_page_rows, sources_page, sources_total_pages = _paginate(uploaded, sources_page)
+    sheet_rows, sheet_page, sheet_total_pages = _paginate(coding_sheet.rows, sheet_page)
 
     pdf_scan_state = runtime.pdf_scanner.state(project.project_id)
-    api_key_set = bool(runtime.api_key(run_settings.provider))
+    api_key_set = runtime.provider_ready(run_settings.provider)
     saved_key_available = runtime.has_saved_key(run_settings.provider)
     provider_key_status = {
         provider: (
-            "unlocked"
-            if runtime.api_key(provider)
-            else "locked"
-            if runtime.has_saved_key(provider)
+            "unconfigured"
+            if provider == "openai_compatible" and not load_app_settings().openai_base_url
+            else "optional"
+            if provider == "openai_compatible" and runtime.provider_ready(provider) and not (runtime.api_key(provider) or runtime.has_saved_key(provider))
+            else "saved"
+            if runtime.api_key(provider) or runtime.has_saved_key(provider)
             else "missing"
         )
         for provider in PROVIDERS
@@ -400,6 +466,7 @@ def _project_view(
 
     can_run = bool(
         api_key_set
+        and run_settings.model.strip()
         and manual is not None
         and manual.is_complete
         and not coding_sheet.sheet_issues
@@ -427,6 +494,7 @@ def _project_view(
         run_state
         and not is_running
         and api_key_set
+        and run_settings.model.strip()
         and manual is not None
         and manual.is_complete
         and not coding_sheet.sheet_issues
@@ -444,6 +512,9 @@ def _project_view(
         "sources_page": sources_page,
         "sources_total_pages": sources_total_pages,
         "coding_sheet": coding_sheet,
+        "sheet_rows": sheet_rows,
+        "sheet_page": sheet_page,
+        "sheet_total_pages": sheet_total_pages,
         "orphan_pdfs": id_orphans_page_rows,
         "orphan_pdfs_count": len(orphan_pdfs),
         "id_orphans_page": id_orphans_page,
@@ -470,6 +541,7 @@ def _project_view(
         "completed_articles": completed_articles,
         "failed_result_count": failed_result_count,
         "api_key_set": api_key_set,
+        "run_provider_setup_error": runtime.provider_setup_error(run_settings.provider),
         "saved_key_available": saved_key_available,
         "provider_key_status": provider_key_status,
         "provider_default_models": {provider: default_model(provider) for provider in PROVIDERS},
@@ -483,7 +555,8 @@ def _project_view(
         "run_settings": run_settings,
         "manual_generator_provider": generator_provider,
         "manual_generator_model": app_settings.manual_generator_model,
-        "manual_generator_api_key_set": bool(runtime.api_key(generator_provider)),
+        "manual_generator_ready": runtime.provider_setup_error(generator_provider, app_settings.manual_generator_model) is None,
+        "manual_generator_setup_error": runtime.provider_setup_error(generator_provider, app_settings.manual_generator_model),
         "manual_generator_saved_key_available": runtime.has_saved_key(generator_provider),
         "run_rows": run_rows_page,
         "run_row_count": len(run_rows_all),
@@ -498,8 +571,18 @@ def _project_view(
 def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
     app.add_middleware(LocalSecurityMiddleware)
+    app.mount(
+        f"/{token}/docs",
+        StaticFiles(directory=PACKAGE_DIR / "documentation", html=True),
+        name="documentation",
+    )
     runtime = Runtime(projects_root=projects_root)
     app.state.runtime = runtime
+    updates = UpdateChecker()
+
+    @app.get(f"/{token}/updates")
+    def update_status():
+        return {"version": updates.check()}
 
     @app.get("/", include_in_schema=False)
     async def root_without_token() -> PlainTextResponse:
@@ -527,13 +610,18 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         )
 
     @app.get(f"/{token}/", response_class=HTMLResponse)
-    async def home(request: Request):
+    async def home(request: Request, q: str = "", sort: str = "newest", page: int = 1):
+        view = _home_view(list_projects(root=runtime.projects_root), q=q, sort=sort, page=page)
+        def page_url(number: int) -> str:
+            return f"/{token}/?" + urlencode({"q": view["q"], "sort": view["sort"], "page": number})
         return TEMPLATES.TemplateResponse(
             request,
             "home.html",
             {
                 "token": token,
-                "projects": list_projects(root=runtime.projects_root),
+                **view,
+                "previous_url": page_url(view["page"] - 1),
+                "next_url": page_url(view["page"] + 1),
                 "api_key_set": runtime.has_any_api_key(),
             },
         )
@@ -591,8 +679,20 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         tmp_path = Path(handle.name)
         handle.close()
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            checksums = {}
             for abs_path, arcname in files:
-                archive.write(abs_path, arcname)
+                digest = hashlib.sha256()
+                size = 0
+                with abs_path.open("rb") as source, archive.open(arcname, "w", force_zip64=True) as destination:
+                    while chunk := source.read(1024 * 1024):
+                        destination.write(chunk)
+                        digest.update(chunk)
+                        size += len(chunk)
+                checksums[arcname] = {"sha256": digest.hexdigest(), "bytes": size}
+            settings_content = json_bytes(load_run_settings(project))
+            archive.writestr("run_settings.json", settings_content)
+            checksums["run_settings.json"] = {"sha256": hashlib.sha256(settings_content).hexdigest(), "bytes": len(settings_content)}
+            archive.writestr("export_manifest.json", json_bytes(export_manifest(project, checksums)))
         return FileResponse(
             tmp_path,
             media_type="application/zip",
@@ -615,6 +715,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         id_saved_page: int = 1,
         id_orphans_page: int = 1,
         sources_page: int = 1,
+        sheet_page: int = 1,
     ):
         try:
             project = runtime.project(project_id)
@@ -640,6 +741,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 id_saved_page=id_saved_page,
                 id_orphans_page=id_orphans_page,
                 sources_page=sources_page,
+                sheet_page=sheet_page,
             ),
         }
         return TEMPLATES.TemplateResponse(request, "project.html", context)
@@ -658,6 +760,8 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 "saved_keys": {p: runtime.has_saved_key(p) for p in PROVIDERS},
                 "keyring_available": credentials.keyring_available(),
                 "app_settings": load_app_settings(),
+                "provider_default_models": {p: default_model(p) for p in PROVIDERS},
+                "grobid_settings_enabled": GROBID_SETTINGS_ENABLED,
                 "error": error,
             },
         )
@@ -675,19 +779,6 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             return RedirectResponse(f"/{token}/settings?error={quote(str(exc))}", status_code=303)
         return RedirectResponse(f"/{token}/settings", status_code=303)
 
-    @app.post(f"/{token}/settings/api-key/unlock")
-    async def unlock_api_key(provider: str = Form(...)):
-        if provider not in PROVIDERS:
-            raise HTTPException(status_code=400, detail="Unknown provider.")
-        try:
-            unlocked = runtime.unlock_key(provider)
-        except credentials.CredentialStoreError as exc:
-            return RedirectResponse(f"/{token}/settings?error={quote(str(exc))}", status_code=303)
-        if not unlocked:
-            message = "No key is currently stored for this provider. Paste and save the key again."
-            return RedirectResponse(f"/{token}/settings?error={quote(message)}", status_code=303)
-        return RedirectResponse(f"/{token}/settings", status_code=303)
-
     @app.post(f"/{token}/settings/api-key/clear")
     async def clear_api_key(provider: str = Form(...)):
         if provider not in PROVIDERS:
@@ -698,39 +789,29 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             return RedirectResponse(f"/{token}/settings?error={quote(str(exc))}", status_code=303)
         return RedirectResponse(f"/{token}/settings", status_code=303)
 
-    @app.post(f"/{token}/projects/{{project_id}}/run/unlock")
-    async def unlock_project_run_key(project_id: str, provider: str = Form(...)):
-        project = runtime.project(project_id)
-        if provider not in PROVIDERS:
-            raise HTTPException(status_code=400, detail="Unknown provider.")
+    @app.post(f"/{token}/settings/openai-compatible")
+    async def save_endpoint_settings(
+        openai_base_url: str = Form(""),
+        openai_response_format: str = Form("json_schema"),
+        api_key: str = Form(""),
+    ):
         try:
-            unlocked = runtime.unlock_key(provider)
-        except credentials.CredentialStoreError as exc:
-            return RedirectResponse(
-                f"/{token}/projects/{project_id}?tab=run&error={quote(str(exc))}", status_code=303
-            )
-        if not unlocked:
-            message = "No key is currently stored for this provider. Save it again in Settings."
-            return RedirectResponse(
-                f"/{token}/projects/{project_id}?tab=run&error={quote(message)}", status_code=303
-            )
-        settings = load_run_settings(project)
-        if settings.provider != provider:
-            # Unlocking from the provider picker confirms the user's switch.
-            # Persist it so the reload, model default, and next run all agree.
-            save_run_settings(
-                project,
-                RunSettings(
-                    provider=provider,
-                    model="",
-                    parallel_requests=settings.parallel_requests,
-                    request_delay_sec=settings.request_delay_sec,
-                    request_timeout_sec=settings.request_timeout_sec,
-                    service_tier=settings.service_tier,
-                    reasoning_effort=settings.reasoning_effort,
-                ),
-            )
-        return RedirectResponse(f"/{token}/projects/{project_id}?tab=run", status_code=303)
+            endpoint_url = normalize_base_url(openai_base_url) if openai_base_url.strip() else ""
+            if openai_response_format not in {"json_schema", "json_object", "none"}:
+                raise ValueError("Unknown JSON output mode.")
+        except ValueError as exc:
+            return RedirectResponse(f"/{token}/settings?error={quote(str(exc))}", status_code=303)
+        if api_key.strip():
+            try:
+                runtime.set_api_key("openai_compatible", api_key.strip())
+            except credentials.CredentialStoreError as exc:
+                return RedirectResponse(f"/{token}/settings?error={quote(str(exc))}", status_code=303)
+        save_app_settings(replace(
+            load_app_settings(),
+            openai_base_url=endpoint_url,
+            openai_response_format=openai_response_format,
+        ))
+        return RedirectResponse(f"/{token}/settings", status_code=303)
 
     @app.post(f"/{token}/settings/app")
     async def save_app_settings_route(
@@ -739,14 +820,15 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         manual_generator_model: str = Form(""),
         grobid_url: str = Form(""),
     ):
-        save_app_settings(
-            AppSettings(
-                upload_size_cap_mb=upload_size_cap_mb,
-                manual_generator_provider=manual_generator_provider,
-                manual_generator_model=manual_generator_model,
-                grobid_url=grobid_url,
-            )
-        )
+        current_settings = load_app_settings()
+        save_app_settings(replace(
+            current_settings,
+            upload_size_cap_mb=upload_size_cap_mb,
+            manual_generator_provider=manual_generator_provider,
+            manual_generator_model=manual_generator_model,
+            # A hidden field must never clear an existing advanced setting.
+            grobid_url=grobid_url if GROBID_SETTINGS_ENABLED else current_settings.grobid_url,
+        ))
         return RedirectResponse(f"/{token}/settings", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/settings")
@@ -764,15 +846,17 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         project = runtime.project(project_id)
         settings = RunSettings(
             provider=provider,
-            model="" if provider != previous_provider else model,
+            model=model if provider == "openai_compatible" or provider == previous_provider else "",
             parallel_requests=parallel_requests,
             request_delay_sec=request_delay_sec,
             request_timeout_sec=request_timeout_sec,
             service_tier=service_tier,
             reasoning_effort=reasoning_effort,
         ).clamped()
-        problems = check_model(
-            settings.provider, settings.model, api_key=runtime.api_key(settings.provider) or ""
+        setup_error = await run_in_threadpool(runtime.prepare_provider, settings.provider, settings.model)
+        problems = [setup_error] if setup_error else check_model(
+            settings.provider, settings.model, api_key=runtime.api_key(settings.provider) or "",
+            **({"base_url": load_app_settings().openai_base_url} if settings.provider == "openai_compatible" else {})
         )
         save_run_settings(project, settings)
         if problems:
@@ -838,17 +922,9 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         project = runtime.project(project_id)
         settings = load_app_settings()
         provider = settings.manual_generator_provider
-        api_key = runtime.api_key(provider)
-        if not api_key:
-            return JSONResponse(
-                {
-                    "error": (
-                        f"Set or unlock a {PROVIDER_LABELS.get(provider, provider)} API key "
-                        "in global Settings before drafting a manual."
-                    )
-                },
-                status_code=400,
-            )
+        setup_error = await run_in_threadpool(runtime.prepare_provider, provider, settings.manual_generator_model)
+        if setup_error:
+            return JSONResponse({"error": setup_error}, status_code=400)
 
         try:
             document_text = await run_in_threadpool(
@@ -857,12 +933,16 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 file.filename or "",
                 max_bytes=settings.upload_size_cap_bytes,
             )
+            await file.seek(0)
+            source_bytes = await file.read()
             draft = await run_in_threadpool(
-                draft_coding_manual,
+                audited_call, project, "manual_draft", draft_coding_manual,
+                audit_inputs={"uploaded/" + Path(file.filename or "manual").name: source_bytes},
                 provider=provider,
                 document_text=document_text,
-                api_key=api_key,
+                api_key=runtime.api_key(provider) or "",
                 model=settings.manual_generator_model,
+                **endpoint_options(provider, settings),
             )
         except ManualDraftError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -885,6 +965,51 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         raw = await file.read()
         project.coding_sheet_path.write_text(raw.decode("utf-8", errors="replace"), encoding="utf-8")
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
+
+    @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/draft", response_class=JSONResponse)
+    async def draft_sheet(project_id: str, file: UploadFile = File(...), notes: str = Form("")):
+        project = runtime.project(project_id)
+        settings = load_app_settings()
+        provider = settings.manual_generator_provider
+        setup_error = await run_in_threadpool(runtime.prepare_provider, provider, settings.manual_generator_model)
+        if setup_error:
+            return JSONResponse({"error": setup_error}, status_code=400)
+        try:
+            manual = parse_coding_manual(read_manual_text(project))
+            source = await run_in_threadpool(
+                read_source_csv, file.file, file.filename or "",
+                max_bytes=settings.upload_size_cap_bytes,
+            )
+            await file.seek(0)
+            source_bytes = await file.read()
+            draft = await run_in_threadpool(
+                audited_call, project, "sheet_conversion", draft_coding_sheet, provider=provider, source=source,
+                audit_inputs={"uploaded/" + Path(file.filename or "sheet.csv").name: source_bytes},
+                manual=manual_to_yaml_text(manual), notes=notes,
+                filenames=[path.name for path in list_uploaded_pdfs(project.sources_dir)],
+                api_key=runtime.api_key(provider) or "", model=settings.manual_generator_model,
+                **endpoint_options(provider, settings),
+            )
+        except (CodingSheetDraftError, ManualError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except ProviderError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        return JSONResponse(draft)
+
+    @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/draft/save", response_class=JSONResponse)
+    async def save_sheet_draft(project_id: str, csv_text: str = Form(...)):
+        project = runtime.project(project_id)
+        if runtime.runner.is_running(project_id):
+            return JSONResponse({"error": "Wait for the active run to finish before replacing the sheet."}, status_code=409)
+        try:
+            validate_sheet_csv(csv_text, require_complete=True)
+        except CodingSheetDraftError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        previous = project.coding_sheet_path.read_text(encoding="utf-8") if project.coding_sheet_path.exists() else ""
+        if csv_text != previous:
+            project.coding_sheet_path.write_text(csv_text, encoding="utf-8")
+            clear_output(project)
+        return JSONResponse({"redirect": f"/{token}/projects/{project_id}?tab=coding-sheet"})
 
     @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/match-pdfs")
     async def match_coding_sheet_pdfs(request: Request, project_id: str):
@@ -955,7 +1080,9 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         settings = view["run_settings"]
         if not view["can_run"]:
             reasons = []
-            if not runtime.api_key(settings.provider):
+            if settings.provider == "openai_compatible" and (not runtime.provider_ready(settings.provider) or not settings.model.strip()):
+                reasons.append("configure the OpenAI-compatible base URL in Settings and enter a model")
+            elif not runtime.provider_ready(settings.provider):
                 reasons.append(
                     f"a {PROVIDER_LABELS.get(settings.provider, settings.provider)} API key "
                     "is required (set it in Settings)"
@@ -972,11 +1099,15 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 reasons.append("a run is already in progress")
             raise HTTPException(status_code=400, detail="Cannot run: " + "; ".join(reasons) + ".")
 
+        setup_error = await run_in_threadpool(runtime.prepare_provider, settings.provider, settings.model)
+        if setup_error:
+            raise HTTPException(status_code=400, detail=setup_error)
         runtime.runner.start(
             project=project,
             manual=view["manual"],
             coding_sheet=view["coding_sheet"],
-            api_key=runtime.api_key(settings.provider),
+            api_key=runtime.api_key(settings.provider) or "",
+            **endpoint_options(settings.provider),
             provider=settings.provider,
             model=settings.model,
             parallel_requests=settings.parallel_requests,
@@ -1000,7 +1131,9 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         settings = view["run_settings"]
         if runtime.runner.is_running(project_id):
             raise HTTPException(status_code=409, detail="A run is already in progress.")
-        if not runtime.api_key(settings.provider):
+        if settings.provider == "openai_compatible" and (not runtime.provider_ready(settings.provider) or not settings.model.strip()):
+            raise HTTPException(status_code=400, detail="Configure the OpenAI-compatible base URL and model.")
+        if not runtime.provider_ready(settings.provider):
             raise HTTPException(
                 status_code=400,
                 detail=f"A {PROVIDER_LABELS.get(settings.provider, settings.provider)} API key "
@@ -1026,11 +1159,15 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if not targets:
             raise HTTPException(status_code=400, detail="Nothing to retry.")
 
+        setup_error = await run_in_threadpool(runtime.prepare_provider, settings.provider, settings.model)
+        if setup_error:
+            raise HTTPException(status_code=400, detail=setup_error)
         runtime.runner.start(
             project=project,
             manual=view["manual"],
             coding_sheet=view["coding_sheet"],
-            api_key=runtime.api_key(settings.provider),
+            api_key=runtime.api_key(settings.provider) or "",
+            **endpoint_options(settings.provider),
             provider=settings.provider,
             model=settings.model,
             parallel_requests=settings.parallel_requests,
@@ -1059,7 +1196,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         return state.snapshot()
 
     @app.get(f"/{token}/projects/{{project_id}}/raw/{{filename}}")
-    async def view_raw_response(project_id: str, filename: str):
+    async def view_raw_response(request: Request, project_id: str, filename: str):
         project = runtime.project(project_id)
         safe = Path(filename).name
         path = (project.raw_dir / safe).resolve()

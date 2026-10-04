@@ -1,7 +1,9 @@
 # MetaCoder
 
-Local browser app for LLM-assisted meta-analysis moderator coding. See `plan.md` for
-the full design and `todo.md` for the build order and current status.
+Local browser app for LLM-assisted meta-analysis moderator coding.
+
+> [!TIP]
+> **New to MetaCoder?** Read the [user guide](https://shaheedazaad.github.io/meta-coder/) for installation instructions and a walkthrough of the full coding workflow.
 
 ## Run it
 
@@ -73,40 +75,95 @@ A few other things worth knowing while developing:
   ref (default `HEAD`) into `dist/meta-coder-<version>.tar.gz` — see
   "Installing as an end user" below for the full install-script flow.
 
-## Installing as an end user
+## Documentation
 
-`scripts/install.sh` (macOS/Linux) and `scripts/install.ps1` (Windows) install a
-versioned release bundle's locked Pixi environment and put a `meta-coder` launcher
-on your PATH — no separate Python install needed. Point `META_CODER_RELEASE_BASE_URL`
-at wherever release bundles are published (there's no hosted release feed for this
-project yet — see `scripts/build_release.sh` to build one, and both installers error
-out clearly if this isn't set):
+Open **Documentation** in the app header, or use the guide link in each project
+section. The MkDocs site is bundled with the app and works offline. Its custom
+theme reuses the app's Basecoat CSS, colours, and light/dark preference.
+
+To edit and preview the guide:
 
 ```sh
-META_CODER_RELEASE_BASE_URL=https://github.com/<org>/<repo>/releases/latest/download \
-  sh scripts/install.sh
+pip install -e ".[docs]"
+python -m mkdocs serve
+# Rebuild the bundled copy after changing docs, screenshots, or app styles:
+python -m mkdocs build --strict
 ```
 
-Re-running the installer installs the newest version and removes the old one — see
-`todo.md` step 20 for how this was verified (a local HTTP server standing in for a
-real release feed, install → upgrade → confirm only the new version remains). The
-Windows script mirrors the same logic but hasn't been run on an actual Windows
-machine.
+Author pages in `docs/content/`, edit the theme in `docs/theme/`, and configure
+navigation in `mkdocs.yml`. `docs/hooks.py` includes the app's real styles and the
+screenshots. Commit the generated `meta_coder/documentation/` directory with its
+sources so source installs, wheels, and release bundles all include working help
+without a runtime MkDocs dependency. A standalone build can also be deployed to
+any static host; no app token or external CDN is embedded in the files.
+
+Regenerate the ten screenshots using an isolated fictional project (no API calls
+or real credentials), with installed Google Chrome:
+
+```sh
+pip install -e ".[docs-screenshots]"
+python scripts/capture_docs.py
+python -m mkdocs build --strict
+```
+
+Alternatively, run `python -m playwright install chromium` and pass
+`--browser chromium` to the capture script. Screenshot data is temporary and
+removed when capture finishes. Generated images live in `docs/assets/screenshots/`.
+
+## Install or update
+
+Install the latest stable [GitHub release](https://github.com/shaheedazaad/meta-coder/releases/latest) using the commands below. Python and dependencies are managed automatically with Pixi.
+
+**macOS / Linux** — run in a terminal:
+
+```bash
+curl -fsSL https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.sh | bash
+```
+
+**Windows** — run in PowerShell:
+
+```powershell
+irm https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.ps1 | iex
+```
+
+Then run `meta-coder`. Follow the installer's PATH instructions if the command is not found.
+
+To update, stop MetaCoder, rerun the same installer, and start it again. Your projects, preferences, and saved API keys are kept. Export a project ZIP first if you want a backup. The app checks GitHub for a newer stable release when a page opens, caching the result for six hours. An available update appears as an informational banner; offline checks fail silently. Checks read public release metadata without a GitHub login; no project data or AI provider credentials are sent.
+
+For a specific version, set `META_CODER_VERSION` (for example, `0.1.0`) before running the installer. `META_CODER_RELEASE_BASE_URL` optionally overrides the download location for mirrors and testing.
+
+### Uninstalling
+
+Stop MetaCoder, then run the uninstaller for your platform from this checkout:
+
+```sh
+bash scripts/uninstall.sh
+```
+
+On Windows, run `./scripts/uninstall.ps1` in PowerShell. These scripts remove
+all release versions and the installer's launcher; the Windows script also
+removes its user PATH entry. They can safely be run again after uninstalling.
+Projects, settings, saved API keys in the OS credential store, and Pixi are kept.
+`META_CODER_HOME` overrides are left untouched. On Linux, use the same
+`XDG_DATA_HOME` value you used when installing.
+
+For a source installation made with pip, run `python -m pip uninstall meta-coder`
+using the Python environment where you installed it instead.
 
 ## Try it out
 
 1. Create a project.
 2. Set an API key in **Settings**: paste a Gemini key (get one at
    [Google AI Studio](https://aistudio.google.com/app/apikey)) or an OpenRouter key
-   ([openrouter.ai](https://openrouter.ai/settings/keys)). Held in memory for the
+   ([openrouter.ai](https://openrouter.ai/settings/keys)). Keys are saved in the
    OS credential store (macOS Keychain / Windows Credential Locker / Linux Secret
-   Service). Keys are always saved securely and must be unlocked again after restart;
-   there is no session-only or plaintext fallback.
+   Service). After restart, keychain access is requested when you run an action
+   that needs a key, never on launch. There is no separate unlock step or plaintext fallback.
 3. Write a coding manual on the project's **Coding manual** tab — a structured
    editor, not raw YAML: `effect_definition` (what comparison counts as "the
    effect"), and `effects` (the fields the model codes, with categories for
    categorical ones). A starter example is pre-filled when you create a project. You
-   can also import an existing `manual.yml`, or drop a PDF/DOCX coding manual into
+   can also import an existing `manual.yml`, or drop a PDF, DOCX, RTF, or Markdown (.md) coding manual into
    the automatic generator. Its provider/model are configured globally in Settings,
    independently of extraction. The draft appears in the editor without a page reload
    and is not saved until you explicitly validate and save it.
@@ -115,6 +172,17 @@ machine.
    `locator`, `authors`, `year` — one row per effect/experiment/condition. A row
    whose `source_pdf` doesn't match an uploaded file is flagged as a blocking error,
    not silently skipped.
+   For a CSV with a different layout, use **Convert an existing coding sheet**.
+   Add optional notes about its columns and intended effect rows, choose the CSV,
+   and click **Convert to a draft**. Conversion uses the saved coding manual and
+   the provider/model configured for manual drafting. Review the preview and
+   warnings, edit the CSV if needed, then choose **Save converted sheet**.
+   Conversion preserves the current sheet and results until you save; saving a
+   changed sheet clears prior extraction results. Missing authors/year must be
+   filled in before saving; unmatched PDFs can be identified afterward.
+   CSVs must be UTF-8, with at most 2,000 source rows and 500,000 characters.
+   Already formatted CSVs can still be uploaded directly under the separate
+   **Upload a CSV already in the required format** option.
 6. On the **Run** tab, pick a provider/model and parallelism/pacing, then run. Every
    coding-sheet row for one PDF is sent in a single request; the model must echo
    back the exact row IDs it was given, or that PDF is marked `needs_review` rather
@@ -129,27 +197,21 @@ machine.
    provider response is also viewable from the Run tab. Hand-check a few rows
    against evidence before trusting the results.
 
-## What's here
+## Audit and reproducibility
 
-- Providers: Gemini (native PDF input) and OpenRouter (manual model ID, live
-  validated before a run starts).
-- Credentials: always persisted in the OS keyring, with no session-only or plaintext
-  fallback; saved keys are explicitly unlocked after restart.
-- Concurrent, paced runs (worker pool + a globally-shared request pacer), live
-  progress, cooperative cancellation, retry of failed/needs-review PDFs.
-- Structured coding-manual editor (no hand-edited YAML), including review-first LLM
-  drafts from PDF/DOCX manuals; CSV coding-sheet import, per-project run settings,
-  and a global settings page (API keys, manual-generator model, upload size cap).
-- Downloads: per-file CSV/YAML, or a full project ZIP; open the project folder
-  directly.
+**Download audit ZIP** on Results exports current project files and persistent
+`audit/` history. Each extraction or AI drafting action records app/source and
+dependency versions, UTC timestamps, input snapshots, exact credential-free
+request bodies, full provider response envelopes, model revision/fingerprint
+when returned, validation outcomes, and every HTTP retry. Run records preserve
+CSV exports and connect per-PDF attempts. The ZIP includes current run settings
+and an `export_manifest.json` with SHA-256 checksums.
 
-## What's deliberately not here yet
-
-The evidence-backed review grid (accept/flag/override per coded cell — the
-project's primary planned interaction surface, see `plan.md` "Problem 2"),
-field-level invalidation on manual edits (a manual change still does a full
-`output/` reset), and a coding-sheet GUI grid (CSV import only). Both are ordered
-and reasoned about in `todo.md`.
+History survives retries, manual changes, source removal, and clearing working
+output. Deleting a project deletes its history. API credentials are excluded;
+research documents and prompts are included. Older runs cannot be backfilled,
+and provider aliases or nondeterministic inference can prevent identical reruns.
+See [the audit guide](docs/content/auditing.md) for the archive layout and verifier.
 
 ## Tests
 
@@ -159,6 +221,34 @@ pixi run -e dev test
 pip install -e ".[dev]"
 pytest
 ```
+
+Measure Python statement and branch coverage with `pixi run -e dev coverage` or
+`pytest --cov=meta_coder --cov-branch --cov-report=term-missing --cov-report=html`.
+The HTML report is written to `htmlcov/index.html`. The command fails if any
+application Python statement or branch is uncovered.
+
+Frontend tests render the production templates with an isolated temporary project,
+then execute the complete app script in a DOM environment. They cover editing,
+drafting, tabs, uploads, live search, progress polling, and navigation protection:
+
+```sh
+npm ci
+npm test
+npm run coverage
+```
+
+Node 24 is recommended and is needed only for development checks. The DOM fixtures also need the Python
+dev dependencies above. Tests use `.venv/bin/python` when available, otherwise
+`python`; set `PYTHON` to select another interpreter (for example the Pixi dev
+interpreter). JavaScript coverage reports are written to `coverage/index.html`.
+`npm run coverage` enforces 100% statement, branch, function, and line coverage
+for the app's own JavaScript (vendored dependencies are excluded). The inline
+pre-paint theme script is tested against the main script in both light and dark
+system modes. Rendered pages and their DOM interactions are covered; these tests
+do not claim pixel-level CSS verification or live-provider integration.
+
+Run both coverage commands before merging changes. All provider requests in the
+automated tests are faked; no API keys are needed.
 
 `tests/test_mechanism.py` is the important one: it proves the row_id/locator
 mechanism (build the response schema, hard-reject on any ID mismatch) with
@@ -172,5 +262,48 @@ work without killing an in-flight request.
 
 Server-rendered Jinja templates styled with [Basecoat](https://basecoatui.com/), a
 vendored CSS/JS component library (`meta_coder/static/vendor/`) with a hand-authored
-`app.css` on top for page-level layout and a blue color scheme. No Node at install or
+`app.css` on top for page-level layout and neutral surfaces with blue action accents. No Node at install or
 launch, and nothing to compile — every frontend file is checked into the repo as-is.
+
+### OpenAI-compatible endpoints
+
+In **Settings**, enter the endpoint's API base URL (for example,
+`http://localhost:8000/v1` or `https://api.openai.com/v1`). Include its API prefix;
+MetaCoder appends `/chat/completions`. The endpoint is shared across projects
+and the manual generator. Select **OpenAI-compatible** on the Run tab, enter the
+exact model ID served by your endpoint, and save. The manual generator has its
+own provider/model selection in Settings.
+
+Save an API key under **OpenAI-compatible** if the server requires authentication;
+local servers can run without one. Keys use the same OS credential store as the
+other providers. Unlock a saved key before running. When switching endpoints,
+replace or remove the old key as appropriate.
+
+The default output mode is **Strict JSON schema**. For servers that do not support
+it, choose **JSON object** or **Prompt only** in Settings. These correspond to the
+[Chat Completions structured-output modes](https://developers.openai.com/api/docs/guides/structured-outputs);
+prompt-only mode omits `response_format`. All results still undergo MetaCoder's
+row and field validation. Model IDs are accepted without requiring a `/models`
+catalog; availability is checked when a request runs.
+
+This provider sends locally extracted PDF text with page numbers, rather than
+PDF attachments. Figures and scanned pages are not interpreted; run OCR first or
+use a provider with native PDF support. PDFs with no extractable text fail with an
+explicit error. Requests retain timeout, cancellation, transient-error retries,
+raw-response review, and token-usage reporting.
+
+## GitHub automation and releases
+
+The [GitHub Pages guide](https://shaheedazaad.github.io/meta-coder/) is built from the same MkDocs sources as the offline help. `.github/workflows/docs.yml` deploys it on relevant pushes to `main`, using GitHub Pages with **GitHub Actions** as its publishing source. The repository, releases, and guide are public. Configure Pages to use GitHub Actions and set the repository variable `PUBLISH_DOCS` to `true` to enable deployment.
+
+Pull requests and pushes to `main` run Python and frontend tests on Linux, Windows, Apple Silicon macOS, and Intel macOS, verify the Pixi lock, and build docs strictly.
+
+To publish a stable release:
+
+1. Update both `pyproject.toml` and `meta_coder/__init__.py` to the same `X.Y.Z` version. Refresh `pixi.lock` with `pixi install` if necessary.
+2. Commit the complete app, docs sources/assets, scripts, lockfiles, tests, and workflows, and push to `main`. Wait for Checks to pass.
+3. Tag that commit with `git tag vX.Y.Z` and push it with `git push origin vX.Y.Z`.
+
+The Release workflow reruns checks, validates the tag against both package versions, builds offline docs from the tagged commit, and publishes the source bundle, both installers, `latest.txt`, and `SHA256SUMS`. All assets are uploaded to a draft before publication. If publishing fails after creating the draft, inspect or delete that draft before retrying the workflow.
+
+For a local bundle from a committed ref, install `.[docs]` and run `bash scripts/build_release.sh <ref>` with that Python on PATH (or set `PYTHON`). Uncommitted files are deliberately excluded. No PyPI publishing token or personal GitHub token is needed by the workflows.

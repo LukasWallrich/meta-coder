@@ -25,6 +25,8 @@ class AppSettings:
     manual_generator_provider: str = DEFAULT_PROVIDER
     manual_generator_model: str = ""
     grobid_url: str = ""
+    openai_base_url: str = ""
+    openai_response_format: str = "json_schema"
 
     def clamped(self) -> "AppSettings":
         provider = (
@@ -40,6 +42,10 @@ class AppSettings:
             manual_generator_model=(self.manual_generator_model or "").strip()
             or default_model(provider),
             grobid_url=(self.grobid_url or "").strip(),
+            openai_base_url=(self.openai_base_url or "").strip().rstrip("/"),
+            openai_response_format=self.openai_response_format
+            if self.openai_response_format in {"json_schema", "json_object", "none"}
+            else "json_schema",
         )
 
     @property
@@ -66,6 +72,8 @@ def load_app_settings() -> AppSettings:
             ),
             manual_generator_model=str(raw.get("manual_generator_model") or ""),
             grobid_url=str(raw.get("grobid_url") or ""),
+            openai_base_url=str(raw.get("openai_base_url") or ""),
+            openai_response_format=str(raw.get("openai_response_format") or "json_schema"),
         ).clamped()
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return AppSettings().clamped()
@@ -77,3 +85,10 @@ def save_app_settings(settings: AppSettings) -> AppSettings:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(normalized), indent=2) + "\n", encoding="utf-8")
     return normalized
+
+
+def endpoint_options(provider: str, settings: AppSettings | None = None) -> dict[str, str]:
+    if provider != "openai_compatible":
+        return {}
+    settings = settings or load_app_settings()
+    return {"base_url": settings.openai_base_url, "response_format": settings.openai_response_format}

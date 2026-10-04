@@ -1,3 +1,50 @@
+// One place to track unsaved editor state across project tabs. Tab switches do
+// not discard changes; navigation and background refreshes must preserve them.
+var projectEdits = (function () {
+  var readers = new Map();
+  var submitting = null;
+  var initialDisabled = new WeakMap();
+  function dirty() {
+    return Array.from(readers).some(function (entry) {
+      return entry[0] !== submitting && entry[1]();
+    });
+  }
+  function update() {
+    var changed = dirty();
+    document.querySelectorAll('[data-requires-saved-manual]').forEach(function (button) {
+      if (!initialDisabled.has(button)) initialDisabled.set(button, button.disabled);
+      button.disabled = initialDisabled.get(button) || changed;
+    });
+    var notice = document.getElementById('unsaved-changes');
+    if (notice) notice.classList.toggle('hidden', !changed);
+  }
+  document.addEventListener('input', function () { queueMicrotask(update); });
+  document.addEventListener('change', function () { queueMicrotask(update); });
+  document.addEventListener('click', function () { queueMicrotask(update); }, true);
+  document.addEventListener('submit', function (event) {
+    queueMicrotask(function () {
+      if (!event.defaultPrevented) submitting = event.target;
+    });
+  });
+  window.addEventListener('beforeunload', function (event) {
+    if (!dirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+    // If navigation is cancelled, the next attempt must check every form again.
+    submitting = null;
+  });
+  return {
+    register: function (form, reader) { readers.set(form, reader); update(); },
+    update: update,
+    dirty: dirty,
+    refresh: function () {
+      if (!dirty()) { window.location.reload(); return; }
+      var notice = document.getElementById('background-update');
+      if (notice) notice.classList.remove('hidden');
+    }
+  };
+})();
+
 // Theme toggle (System/Light/Dark). Mirrors the inline pre-paint script in
 // base.html so the two never disagree about resolution logic; this instance
 // also wires up the dropdown's click handlers and keeps them synced when the
@@ -66,6 +113,7 @@
   }
 
   function filesChosen(input, zone) {
+    if (input.disabled) return;
     updateLabel(input, zone);
     if (!input.files || !input.files.length) return;
     var form = zone.closest("form");
@@ -85,7 +133,7 @@
       zone.addEventListener(evt, function (e) {
         e.preventDefault();
         e.stopPropagation();
-        zone.classList.add("dragging");
+        if (!input.disabled) zone.classList.add("dragging");
       });
     });
 
@@ -99,7 +147,7 @@
 
     zone.addEventListener("drop", function (e) {
       var files = e.dataTransfer && e.dataTransfer.files;
-      if (files && files.length) {
+      if (!input.disabled && files && files.length) {
         input.files = files;
         filesChosen(input, zone);
       }
@@ -262,7 +310,9 @@
   document.getElementById("add-effect-field").addEventListener("click", function () {
     var field = { name: "", type: "string", evidence_required: true, description: "", levels: [] };
     state.effects.push(field);
-    effectsList.appendChild(renderEffectField(field, true));
+    var addedField = renderEffectField(field, true);
+    effectsList.appendChild(addedField);
+    addedField.querySelector('[data-field="name"]').focus();
   });
 
   ["name", "description", "effect_definition"].forEach(function (key) {
@@ -274,8 +324,7 @@
   });
 
   function replaceManualState(nextState) {
-    state = nextState || {};
-    state.effects = state.effects || [];
+    state = nextState;
     effectsList.innerHTML = "";
     state.effects.forEach(function (field) {
       effectsList.appendChild(renderEffectField(field, false));
@@ -290,13 +339,18 @@
 
   var form = document.getElementById("manual-form");
   var hiddenInput = document.getElementById("manual-json-input");
+  var savedManual = JSON.stringify(state);
+  var unsavedDraft = false;
   if (form) {
+    projectEdits.register(form, function () {
+      return unsavedDraft || JSON.stringify(state) !== savedManual;
+    });
     form.addEventListener("submit", function () {
       hiddenInput.value = JSON.stringify(state);
     });
   }
 
-  // PDF/DOCX drafting stays on this page: the generic dropzone above triggers
+  // Document drafting stays on this page: the generic dropzone above triggers
   // requestSubmit(), this handler uploads with fetch, and the validated candidate
   // replaces only the editor's in-memory state. The saved YAML remains untouched
   // until the user submits `manual-form`.
@@ -311,14 +365,14 @@
     function showDraftStatus(kind, message) {
       if (!draftStatus) return;
       draftStatus.className = "alert";
-      draftStatus.setAttribute("data-variant", DRAFT_STATUS_VARIANT[kind] || kind);
+      draftStatus.setAttribute("data-variant", DRAFT_STATUS_VARIANT[kind]);
       draftStatus.style.marginTop = "var(--sp-2)";
       draftStatus.textContent = message;
     }
 
     draftForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      if (drafting || !draftInput || !draftInput.files || !draftInput.files.length) return;
+      if (drafting || !draftInput || draftInput.disabled || !draftInput.files || !draftInput.files.length) return;
       drafting = true;
       var draftData = new FormData(draftForm);
       draftInput.disabled = true;
@@ -337,11 +391,22 @@
             if (!response.ok) {
               throw new Error(payload.error || payload.detail || "The coding-manual draft failed.");
             }
+            if (!payload || !payload.manual || typeof payload.manual !== "object" ||
+                !Array.isArray(payload.manual.effects) || typeof payload.yaml !== "string" ||
+                !payload.manual.effects.every(function (field) {
+                  return field && typeof field === "object" &&
+                    (field.levels == null || (Array.isArray(field.levels) &&
+                      field.levels.every(function (level) { return level && typeof level === "object"; })));
+                })) {
+              throw new Error("The coding-manual draft response was incomplete. Your edits were preserved.");
+            }
             return payload;
           });
         })
         .then(function (payload) {
           replaceManualState(payload.manual);
+          unsavedDraft = true;
+          projectEdits.update();
 
           var badge = document.getElementById("manual-status-badge");
           if (badge) {
@@ -351,8 +416,8 @@
           }
           var sidebarBadge = document.getElementById("manual-sidebar-status");
           if (sidebarBadge) {
-            sidebarBadge.className = "badge badge-dot";
-            sidebarBadge.setAttribute("data-variant", "info");
+            sidebarBadge.setAttribute("data-state", "info");
+            sidebarBadge.textContent = "Draft · not saved";
           }
 
           var notice = document.getElementById("manual-draft-notice");
@@ -364,23 +429,22 @@
           var incompleteWarning = document.getElementById("manual-incomplete-warning");
           if (incompleteWarning) incompleteWarning.classList.add("hidden");
 
-          var saveButton = document.getElementById("manual-save-button");
-          if (saveButton) saveButton.textContent = "Validate and save draft";
+          document.querySelectorAll("[data-manual-save]").forEach(function (button) {
+            button.textContent = "Validate and save draft";
+          });
           var yamlKind = document.getElementById("manual-yaml-kind");
           if (yamlKind) yamlKind.textContent = "drafted";
           var yamlPreview = document.getElementById("manual-yaml-preview");
           if (yamlPreview) yamlPreview.textContent = payload.yaml || "";
 
-          document.querySelectorAll("[data-requires-saved-manual]").forEach(function (button) {
-            button.disabled = true;
-          });
+
           var runWarning = document.getElementById("manual-draft-run-warning");
           if (runWarning) runWarning.classList.remove("hidden");
 
           showDraftStatus(
             "success",
             "Draft ready from " + (payload.filename || "the uploaded document") +
-              ". Review it below; it has not been saved yet."
+              ". Review the effect definition and coding fields before saving."
           );
         })
         .catch(function (error) {
@@ -399,7 +463,7 @@
 })();
 
 // Generic tab switching, reused for both the project page's sidebar and the
-// coding manual's Metadata/Coding sheet fields/Effect fields sub-tabs. Every
+// PDF matching sub-tabs. Every
 // tab's content is already server-rendered on the page (no fetch/partial-load)
 // — this just shows one panel at a time within `root`.
 function initTabGroup(root, opts) {
@@ -409,6 +473,7 @@ function initTabGroup(root, opts) {
   if (!panels.length) return;
 
   function activate(tab) {
+    if (opts.linkAttr === "data-tab-link" && tab === "metadata") tab = "analysis";
     var match = null;
     panels.forEach(function (panel) {
       if (panel.getAttribute(opts.panelAttr) === tab) match = panel;
@@ -417,9 +482,19 @@ function initTabGroup(root, opts) {
     tab = match.getAttribute(opts.panelAttr);
     panels.forEach(function (panel) {
       panel.classList.toggle("hidden", panel !== match);
+      var panelTab = panel.getAttribute(opts.panelAttr);
+      panel.id = opts.panelAttr + "-" + panelTab;
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", opts.linkAttr + "-" + panelTab);
     });
     links.forEach(function (link) {
-      link.classList.toggle(opts.activeClass, link.getAttribute(opts.linkAttr) === tab);
+      var linkTab = link.getAttribute(opts.linkAttr);
+      var selected = linkTab === tab;
+      link.classList.toggle(opts.activeClass, selected);
+      link.id = opts.linkAttr + "-" + linkTab;
+      link.setAttribute("aria-controls", opts.panelAttr + "-" + linkTab);
+      link.setAttribute("aria-selected", String(selected));
+      link.tabIndex = selected ? 0 : -1;
     });
     if (tab && opts.storageKey) {
       try {
@@ -430,7 +505,21 @@ function initTabGroup(root, opts) {
     }
   }
 
-  links.forEach(function (link) {
+  links.forEach(function (link, index) {
+    link.addEventListener("keydown", function (e) {
+      var vertical = link.closest('[role="tablist"]').getAttribute("aria-orientation") === "vertical";
+      var next = vertical ? "ArrowDown" : "ArrowRight";
+      var previous = vertical ? "ArrowUp" : "ArrowLeft";
+      var target;
+      if (e.key === next) target = (index + 1) % links.length;
+      else if (e.key === previous) target = (index + links.length - 1) % links.length;
+      else if (e.key === "Home") target = 0;
+      else if (e.key === "End") target = links.length - 1;
+      else return;
+      e.preventDefault();
+      links[target].click();
+      links[target].focus();
+    });
     link.addEventListener("click", function (e) {
       e.preventDefault();
       activate(link.getAttribute(opts.linkAttr));
@@ -464,7 +553,7 @@ function initTabGroup(root, opts) {
   var bar = root.querySelector("[data-progress-bar]");
   var summary = root.querySelector("[data-progress-summary]");
   var rowsByPdf = {};
-  root.querySelectorAll("[data-run-row]").forEach(function (tr) {
+  document.querySelectorAll("[data-run-row]").forEach(function (tr) {
     rowsByPdf[tr.getAttribute("data-run-row")] = tr;
   });
 
@@ -527,7 +616,7 @@ function initTabGroup(root, opts) {
           // to pick up the freshly server-rendered table (correct sort/paging,
           // retry buttons, the Results tab appearing, etc.) rather than trying
           // to replicate all of that in JS.
-          window.location.reload();
+          projectEdits.refresh();
         }
       })
       .catch(function () {
@@ -574,7 +663,7 @@ function initTabGroup(root, opts) {
           applySnapshot(data);
           setTimeout(poll, 1500);
         } else {
-          window.location.reload();
+          projectEdits.refresh();
         }
       })
       .catch(function () {
@@ -606,7 +695,7 @@ function initTabGroup(root, opts) {
 
   function updateProviderSettings(resetModel) {
     document.querySelectorAll("[data-provider-setting]").forEach(function (setting) {
-      setting.hidden = setting.getAttribute("data-provider-setting") !== provider.value;
+      setting.hidden = !setting.getAttribute("data-provider-setting").split(" ").includes(provider.value);
     });
     if (resetModel && model) model.value = defaults[provider.value] || "";
 
@@ -614,24 +703,26 @@ function initTabGroup(root, opts) {
     var status = statuses[provider.value] || "missing";
     var label = labels[provider.value] || provider.value;
     var message = keyStatus.querySelector("[data-run-key-message]");
-    var unlockForm = keyStatus.querySelector("[data-run-unlock-form]");
-    keyStatus.setAttribute("data-variant", status === "unlocked" ? "success" : "warning");
+    keyStatus.setAttribute("data-variant", (status === "saved" || status === "optional") ? "success" : "warning");
     if (message) {
-      message.textContent = status === "unlocked"
-        ? label + " API key is set for this session."
-        : status === "locked"
-        ? "The saved " + label + " key is locked for this session."
+      message.textContent = status === "unconfigured"
+        ? "Set the OpenAI-compatible API base URL in Settings."
+        : status === "optional"
+        ? "OpenAI-compatible endpoint is configured (API key optional)."
+        : status === "saved"
+        ? label + " API key is saved. Keychain access will be requested when needed."
         : "No " + label + " API key set yet.";
     }
-    if (unlockForm) {
-      unlockForm.hidden = status !== "locked";
-      var unlockProvider = unlockForm.querySelector('input[name="provider"]');
-      if (unlockProvider) unlockProvider.value = provider.value;
-    }
+
   }
 
   provider.addEventListener("change", function () { updateProviderSettings(true); });
   updateProviderSettings(false);
+  var settingsForm = provider.form;
+  var savedSettings = JSON.stringify(Array.from(new FormData(settingsForm)));
+  projectEdits.register(settingsForm, function () {
+    return JSON.stringify(Array.from(new FormData(settingsForm))) !== savedSettings;
+  });
 })();
 
 (function () {
@@ -640,6 +731,13 @@ function initTabGroup(root, opts) {
     // Top-level tabs survive this app's full-page-reload actions (form
     // submits, the in-progress-run auto-refresh) without any server plumbing —
     // remembered per project so switching projects doesn't leak the tab choice.
+    var navigation = tabRoot.querySelector('.project-tabs');
+    var compactNavigation = matchMedia('(max-width: 48rem)');
+    function updateNavigationOrientation() {
+      navigation.setAttribute('aria-orientation', compactNavigation.matches ? 'horizontal' : 'vertical');
+    }
+    updateNavigationOrientation();
+    compactNavigation.addEventListener('change', updateNavigationOrientation);
     initTabGroup(tabRoot, {
       linkAttr: "data-tab-link",
       panelAttr: "data-tab-panel",
@@ -649,15 +747,13 @@ function initTabGroup(root, opts) {
     });
   }
 
-  var manualSubtabs = document.getElementById("manual-subtabs");
-  if (manualSubtabs) {
-    initTabGroup(manualSubtabs, {
-      linkAttr: "data-subtab-link",
-      panelAttr: "data-subtab-panel",
+  document.querySelectorAll("[data-method-group]").forEach(function (group) {
+    initTabGroup(group, {
+      linkAttr: "data-method-link",
+      panelAttr: "data-method-panel",
       activeClass: "is-active",
-      storageKey: "metaCoderManualSubtab:" + (tabRoot ? tabRoot.dataset.projectId : "default"),
     });
-  }
+  });
 
   var identifySubtabs = document.getElementById("identify-subtabs");
   if (identifySubtabs) {
@@ -669,8 +765,29 @@ function initTabGroup(root, opts) {
     });
   }
 
+  document.addEventListener("invalid", function (event) {
+    var ancestor = event.target.closest("details");
+    while (ancestor) {
+      ancestor.open = true;
+      ancestor = ancestor.parentElement.closest("details");
+    }
+    if (event.target.form !== document.getElementById("manual-form")) return;
+    var firstInvalid = Array.from(event.target.form.elements).find(function (input) {
+      return input.willValidate && !input.validity.valid;
+    });
+    if (event.target !== firstInvalid) return;
+    var panel = event.target.closest("[data-tab-panel]");
+    if (panel) document.querySelector('[data-tab-link="' + panel.dataset.tabPanel + '"]').click();
+    var details = event.target.closest("details");
+    while (details) {
+      details.open = true;
+      details = details.parentElement.closest("details");
+    }
+    event.target.focus();
+  }, true);
+
   // Cross-references from one tab's content to another (e.g. the coding
-  // sheet's "see the PDF identification tab" notice) — clicks the matching
+  // sheet's "see the PDF matching tab" notice) — clicks the matching
   // top-level tab button so its own listener (registered above) does the
   // actual switch.
   document.addEventListener("click", function (e) {
@@ -679,5 +796,223 @@ function initTabGroup(root, opts) {
     e.preventDefault();
     var target = document.querySelector('[data-tab-link="' + jump.getAttribute("data-tab-jump") + '"]');
     if (target) target.click();
+  });
+})();
+
+// Manual drafting has its own model, independent of per-project extraction.
+(function () {
+  var provider = document.getElementById("manual-generator-provider");
+  var model = document.getElementById("manual-generator-model");
+  var defaultsInput = document.getElementById("manual-provider-defaults");
+  if (!provider || !model || !defaultsInput) return;
+  var defaults = JSON.parse(defaultsInput.textContent);
+  var models = {};
+  var previous = provider.value;
+  provider.addEventListener("change", function () {
+    models[previous] = model.value;
+    model.value = models[provider.value] || defaults[provider.value] || "";
+    model.placeholder = provider.value === "openai_compatible" ? "Model ID served by your endpoint" : "Model ID";
+    previous = provider.value;
+  });
+})();
+
+// Coding-sheet conversion is a reviewable draft; saving is a separate action.
+(function () {
+  var form = document.getElementById("sheet-draft-form");
+  if (!form) return;
+  var preview = document.getElementById("sheet-draft-preview");
+  var status = document.getElementById("sheet-draft-status");
+  var saveForm = document.getElementById("sheet-draft-save-form");
+  var csvInput = document.getElementById("sheet-draft-csv");
+  var busy = false;
+
+  var draftRows = [];
+  var draftPage = 1;
+
+  function renderDraftPage() {
+    var body = document.querySelector("#sheet-draft-table tbody");
+    body.replaceChildren();
+    draftRows.slice((draftPage - 1) * 10, draftPage * 10).forEach(function (row) {
+      var tr = document.createElement("tr");
+      ["row_id", "source_pdf", "locator", "authors", "year", "title", "doi"].forEach(function (key) {
+        var cell = document.createElement("td");
+        cell.textContent = row[key];
+        tr.appendChild(cell);
+      });
+      body.appendChild(tr);
+    });
+    var totalPages = Math.max(1, Math.ceil(draftRows.length / 10));
+    document.getElementById("sheet-draft-pager").classList.toggle("hidden", totalPages <= 1);
+    document.getElementById("sheet-draft-page-summary").textContent =
+      "Page " + draftPage + " of " + totalPages + " (" + draftRows.length + " rows)";
+    document.getElementById("sheet-draft-previous").disabled = draftPage <= 1;
+    document.getElementById("sheet-draft-next").disabled = draftPage >= totalPages;
+  }
+
+  document.getElementById("sheet-draft-previous").addEventListener("click", function () {
+    if (draftPage > 1) { draftPage--; renderDraftPage(); }
+  });
+  document.getElementById("sheet-draft-next").addEventListener("click", function () {
+    if (draftPage * 10 < draftRows.length) { draftPage++; renderDraftPage(); }
+  });
+
+  function showStatus(message, variant) {
+    status.textContent = message;
+    status.dataset.variant = variant;
+    status.classList.remove("hidden");
+  }
+
+  function post(target) {
+    return fetch(target.action, { method: "POST", body: new FormData(target) })
+      .then(function (response) {
+        return response.text().then(function (text) {
+          var payload;
+          try { payload = JSON.parse(text); } catch (_) { payload = {}; }
+          if (!response.ok) throw new Error(payload.error || "The request failed. Please try again.");
+          return payload;
+        });
+      });
+  }
+
+  function validateSheetDraft(payload) {
+    var validCount = function (value) { return Number.isInteger(value) && value >= 0; };
+    if (!payload || typeof payload.csv !== "string" || !Array.isArray(payload.rows) ||
+        !payload.rows.every(function (row) {
+          return row && typeof row === "object" &&
+            ["row_id", "source_pdf", "locator", "authors", "year", "title", "doi"].every(function (key) {
+              return typeof row[key] === "string";
+            });
+        }) || !Array.isArray(payload.warnings) ||
+        !payload.warnings.every(function (warning) { return typeof warning === "string"; }) ||
+        !validCount(payload.source_row_count) || !validCount(payload.row_count)) {
+      throw new Error("The coding-sheet draft response was incomplete. Your previous draft was preserved.");
+    }
+    return payload;
+  }
+
+  function setBusy(value) {
+    busy = value;
+    form.setAttribute("aria-busy", String(value));
+    // Preserve disabled states set by the server (missing setup or active run).
+    [form, saveForm].forEach(function (target) {
+      target.querySelectorAll("button").forEach(function (button) {
+        if (value) {
+          button.dataset.wasDisabled = String(button.disabled);
+          button.disabled = true;
+        } else {
+          button.disabled = button.dataset.wasDisabled === "true";
+        }
+      });
+    });
+  }
+
+  var sheetDraftUnsaved = false;
+  projectEdits.register(saveForm, function () { return sheetDraftUnsaved; });
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    showStatus("Converting the CSV using your saved manual and notes…", "info");
+    post(form).then(validateSheetDraft).then(function (payload) {
+      csvInput.value = payload.csv;
+      sheetDraftUnsaved = true;
+      projectEdits.update();
+      document.getElementById("sheet-draft-summary").textContent =
+        payload.source_row_count + " source rows → " + payload.row_count + " coding rows. Review all rows before saving.";
+      var warnings = document.getElementById("sheet-draft-warnings");
+      warnings.replaceChildren();
+      payload.warnings.forEach(function (message) {
+        var item = document.createElement("li");
+        item.textContent = message;
+        warnings.appendChild(item);
+      });
+      draftRows = payload.rows;
+      draftPage = 1;
+      renderDraftPage();
+      preview.classList.remove("hidden");
+      showStatus("Draft ready. Your saved sheet and results have not changed.", "success");
+    }).catch(function (error) {
+      showStatus(error.message, "destructive");
+    }).finally(function () { setBusy(false); });
+  });
+
+  saveForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    showStatus("Validating and saving the converted sheet…", "info");
+    post(saveForm).then(function (payload) {
+      sheetDraftUnsaved = false;
+      projectEdits.update();
+      window.location.assign(payload.redirect);
+    }).catch(function (error) {
+      showStatus(error.message, "destructive");
+    }).finally(function () { setBusy(false); });
+  });
+
+  document.getElementById("sheet-draft-discard").addEventListener("click", function () {
+    if (busy) return;
+    csvInput.value = "";
+    sheetDraftUnsaved = false;
+    projectEdits.update();
+    preview.classList.add("hidden");
+    showStatus("Draft discarded. Your saved coding sheet is unchanged.", "info");
+  });
+})();
+
+// Live project search keeps the input (and its cursor) in place while replacing
+// only the server-rendered results. Invalidate requests as soon as typing resumes.
+(function () {
+  var form = document.querySelector('.project-search');
+  if (!form) return;
+  var query = document.getElementById('project-search');
+  var sort = document.getElementById('project-sort');
+  var results = document.getElementById('project-search-results');
+  var status = document.getElementById('project-search-status');
+  var timer;
+  var controller;
+  var revision = 0;
+
+  function schedule(delay) {
+    clearTimeout(timer);
+    if (controller) controller.abort();
+    var current = ++revision;
+    results.setAttribute('aria-busy', 'true');
+    timer = setTimeout(async function () {
+      controller = new AbortController();
+      var url = new URL(form.action, window.location.href);
+      if (query.value.trim()) url.searchParams.set('q', query.value.trim());
+      url.searchParams.set('sort', sort.value);
+      try {
+        var response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error('Search failed');
+        var html = await response.text();
+        if (current !== revision) return;
+        var next = new DOMParser().parseFromString(html, 'text/html').getElementById('project-search-results');
+        if (!next) throw new Error('Missing project results');
+        results.replaceChildren(...Array.from(next.childNodes));
+        results.dataset.resultCount = next.dataset.resultCount;
+        window.history.replaceState(null, '', url);
+        status.classList.add('u-visually-hidden');
+        status.textContent = next.dataset.resultCount + ' matching projects';
+      } catch (error) {
+        if (current !== revision || error.name === 'AbortError') return;
+        status.classList.remove('u-visually-hidden');
+        status.textContent = 'Could not update projects. Try typing again or press Enter to retry.';
+      } finally {
+        if (current === revision) results.setAttribute('aria-busy', 'false');
+      }
+    }, delay);
+  }
+
+  query.addEventListener('input', function (event) {
+    if (!event.isComposing) schedule(250);
+  });
+  query.addEventListener('compositionend', function () { schedule(250); });
+  sort.addEventListener('change', function () { schedule(0); });
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    schedule(0);
   });
 })();

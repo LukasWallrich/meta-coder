@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A practical guide to coding studies with MetaCoder.">
+  <title>Review and export · MetaCoder Guide</title>
+  <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../assets/vendor/basecoat.min.css">
+  <link rel="stylesheet" href="../assets/app.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="u-visually-hidden-focusable" href="#main">Skip to content</a>
+  <header class="app-bar">
+    <a class="app-bar-brand" href=".."><span class="app-bar-mark" aria-hidden="true">M</span>MetaCoder <span class="docs-brand-label">Guide</span></a>
+    <span class="app-bar-spacer"></span>
+    <a class="btn" data-variant="ghost" data-size="sm" id="back-to-app" hidden>Back to app</a>
+    <label class="u-visually-hidden" for="docs-theme">Theme</label>
+    <select id="docs-theme" class="select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </header>
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <details id="docs-navigation" open>
+        <summary>In this guide</summary>
+        <nav aria-label="Documentation">
+          <a href=".."><span class="docs-nav-number">01</span>Getting started</a><a href="../settings/"><span class="docs-nav-number">02</span>Connections and settings</a><a href="../analysis/"><span class="docs-nav-number">03</span>Define your analysis</a><a href="../manual/"><span class="docs-nav-number">04</span>Coding manual</a><a href="../coding-sheet/"><span class="docs-nav-number">05</span>Coding sheet</a><a href="../sources/"><span class="docs-nav-number">06</span>Source PDFs</a><a href="../matching/"><span class="docs-nav-number">07</span>PDF matching</a><a href="../run/"><span class="docs-nav-number">08</span>Run extraction</a><a href="./" aria-current="page"><span class="docs-nav-number">09</span>Review and export</a><a href="../auditing/"><span class="docs-nav-number">10</span>Audit and reproducibility</a><a href="../projects/"><span class="docs-nav-number">11</span>Project settings</a><a href="../troubleshooting/"><span class="docs-nav-number">12</span>Troubleshooting</a>
+        </nav>
+      </details>
+      <p class="docs-local-note">Your workflow, step by step.<br>Available offline inside the app.</p>
+    </aside>
+    <main id="main" class="docs-article">
+      <p class="docs-eyebrow">METACODER / USER GUIDE</p>
+      <h1 id="review-and-export">Review and export<a class="headerlink" href="#review-and-export" title="Permanent link">&para;</a></h1>
+<p>Use <strong>Results</strong> to inspect processed studies, investigate failures, and download coded data alongside its evidence. Check a sample of values against the original PDFs before using the exports.</p>
+<p><a href="../assets/screenshots/results.png"><img alt="The Results tab before the first extraction run" src="../assets/screenshots/results.png" /></a></p>
+<p><em>The demonstration project has not called a provider; this screenshot shows the initial empty state.</em></p>
+<h2 id="review-each-study">Review each study<a class="headerlink" href="#review-each-study" title="Permanent link">&para;</a></h2>
+<p>The results table reports each PDF's status and available usage information. Open the raw response when you need to understand a provider error or a response that needs review. Readable per-PDF YAML records make it easier to inspect coded effects and supporting quotations.</p>
+<p>Check that each <code>row_id</code> corresponds to the intended experiment or condition, that categories follow your manual, and that cited pages and quotations support the values.</p>
+<h2 id="download-the-data">Download the data<a class="headerlink" href="#download-the-data" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Export</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coded_data.csv</code></td>
+<td>Coded values arranged by effect row</td>
+</tr>
+<tr>
+<td><code>evidence.csv</code></td>
+<td>Supporting page and quote information for the coded cells</td>
+</tr>
+<tr>
+<td>Per-PDF YAML</td>
+<td>Readable coded effects and evidence for a single study</td>
+</tr>
+<tr>
+<td>Audit ZIP</td>
+<td>Complete project export with persistent request/response history, provenance, and checksums</td>
+</tr>
+</tbody>
+</table>
+<p>Keep the coded data and evidence together. Investigate missing values and needs-review results before treating an export as complete. Use the <a href="../run/#cancel-and-retry">retry controls</a> for failed studies after addressing the cause.</p>
+<h2 id="preserve-a-run">Preserve a run<a class="headerlink" href="#preserve-a-run" title="Permanent link">&para;</a></h2>
+<p>Use <strong>Download audit ZIP</strong> to retain the full <a href="../auditing/">audit and reproducibility record</a>. CSV exports alone do not contain complete provenance.</p>
+<p>Download results or a project ZIP before changing the saved manual or coding sheet: those changes clear working extraction results. The persistent audit history retains earlier requests, inputs, responses, and recorded run exports. See <a href="../projects/">Project settings</a> for backup and cleanup controls.</p>
+      <nav class="docs-pagination" aria-label="Adjacent pages">
+        <a href="../run/"><small>Previous</small>Run extraction ←</a>
+        <a href="../auditing/"><small>Next</small>Audit and reproducibility →</a>
+      </nav>
+    </main>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#review-each-study">Review each study</a><a href="#download-the-data">Download the data</a><a href="#preserve-a-run">Preserve a run</a></nav></aside>
+  </div>
+</body>
+</html>

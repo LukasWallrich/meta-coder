@@ -35,7 +35,7 @@ class RunSettings:
     request_delay_sec: int = 0
     request_timeout_sec: int = 0  # 0 means "provider default" — see clamped()
     service_tier: str = DEFAULT_SERVICE_TIER  # Gemini only; ignored by other providers
-    reasoning_effort: str = ""  # OpenRouter only; "" means "provider/model default"
+    reasoning_effort: str = ""  # OpenRouter/OpenAI-compatible; "" means "provider/model default"
 
     def clamped(self) -> "RunSettings":
         provider = self.provider if self.provider in PROVIDERS else DEFAULT_PROVIDER

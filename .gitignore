@@ -26,3 +26,12 @@ dist/
 # Editors
 .vscode/
 .idea/
+
+# Test coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.json
+
+# JavaScript coverage reports
+coverage/

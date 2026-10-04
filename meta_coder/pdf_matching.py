@@ -590,6 +590,7 @@ class PdfScanner:
         self._lock = threading.Lock()
         self._states: dict[str, ScanState] = {}
         self._pending: dict[str, dict[str, Path]] = {}
+        self._inflight: dict[str, int] = {}
         self._running: set[str] = set()
 
     def state(self, project_id: str) -> ScanState | None:
@@ -609,7 +610,7 @@ class PdfScanner:
             if project_id in self._running:
                 state = self._states.get(project_id)
                 if state:
-                    state.total = state.processed + len(pending)
+                    state.total = state.processed + self._inflight.get(project_id, 0) + len(pending)
                 return
             self._running.add(project_id)
             state = ScanState(status="running", total=len(pending))
@@ -623,13 +624,23 @@ class PdfScanner:
     def _scan_loop(self, project: Project, grobid_url: str, state: ScanState) -> None:
         project_id = project.project_id
         cache = load_signal_cache(project)
+        completed = False
         try:
             while True:
                 with self._lock:
                     batch = self._pending.get(project_id, {})
                     self._pending[project_id] = {}
-                if not batch:
-                    break
+                    if not batch:
+                        # Publish completion while holding the same lock used
+                        # by scan_async, so a new queue is either included in
+                        # this worker or starts a fresh worker.
+                        self._running.discard(project_id)
+                        self._inflight.pop(project_id, None)
+                        state.status = "complete"
+                        completed = True
+                        return
+                    self._inflight[project_id] = len(batch)
+                    state.total = state.processed + len(batch) + len(self._pending.get(project_id, {}))
                 for path in batch.values():
                     try:
                         cache[path.name] = _cache_entry(
@@ -637,11 +648,14 @@ class PdfScanner:
                         )
                     except OSError:
                         pass
-                    state.processed += 1
+                    with self._lock:
+                        state.processed += 1
+                        self._inflight[project_id] = max(0, self._inflight.get(project_id, 1) - 1)
+                        state.total = state.processed + self._inflight[project_id] + len(self._pending.get(project_id, {}))
                 save_signal_cache(project, cache)
-                with self._lock:
-                    state.total = state.processed + len(self._pending.get(project_id, {}))
         finally:
-            with self._lock:
-                self._running.discard(project_id)
-            state.status = "complete"
+            if not completed:
+                with self._lock:
+                    self._running.discard(project_id)
+                    self._inflight.pop(project_id, None)
+                    state.status = "complete"

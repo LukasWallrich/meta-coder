@@ -1,51 +1,78 @@
 {% extends "base.html" %}
+{% from "_icons.html" import workflow_icon %}
 {% block title %}Projects · MetaCoder{% endblock %}
 {% block content %}
-<div class="page">
+<div class="page page-narrow home-page">
   <div class="page-head">
+    <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/" target="_blank" rel="noopener">Getting started ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
     <div>
-      <h1>Projects</h1>
+      <h1 class="icon-heading">{{ workflow_icon('folder') }}Projects</h1>
       <p>Meta-analysis coding projects stored on this computer.</p>
     </div>
   </div>
 
-  <section class="section">
-    <div class="section-head">
-      <div>
-        <h2>New project</h2>
-      </div>
-    </div>
+  <section class="section accent-section accent-purple">
+    <div class="section-head"><div><h2 class="icon-heading">{{ workflow_icon('plus') }}New project</h2></div></div>
     <div class="panel panel-pad">
-      <form method="post" action="/{{ token }}/projects" class="cluster" style="flex-wrap:nowrap">
-        <input type="text" name="name" placeholder="e.g. Stroop interference meta-analysis"
+      <form method="post" action="/{{ token }}/projects" class="cluster project-create">
+        <label class="u-visually-hidden" for="project-name">Project name</label>
+        <input id="project-name" type="text" name="name" placeholder="e.g. Stroop interference meta-analysis"
                class="input" style="flex:1" required maxlength="100">
-        <button type="submit" class="btn">Create</button>
+        <button type="submit" class="btn">Create project</button>
       </form>
     </div>
   </section>
 
-  <section class="section">
-    <div class="section-head">
-      <div>
-        <h2>{{ projects | length }} project{% if projects | length != 1 %}s{% endif %}</h2>
+  <section class="section accent-section accent-teal">
+    <div class="section-head"><div><h2 class="icon-heading">{{ workflow_icon('folder') }}Your projects <span class="badge" data-variant="outline">{{ total_projects }}</span></h2></div></div>
+    <form method="get" action="/{{ token }}/" class="project-search" role="search" aria-label="Search projects">
+      <div class="field project-search-query">
+        <label class="u-visually-hidden" for="project-search">Search by name</label>
+        <input id="project-search" type="search" name="q" value="{{ q }}" placeholder="Find a project…" class="input">
       </div>
-    </div>
+      <div class="field">
+        <label class="u-visually-hidden" for="project-sort">Sort</label>
+        <select id="project-sort" name="sort" class="select">
+          {% for value, label in [('newest', 'Newest first'), ('oldest', 'Oldest first'), ('name', 'Name A–Z')] %}
+          <option value="{{ value }}" {% if sort == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </form>
+    <p id="project-search-status" class="u-xs u-muted" role="status" aria-live="polite"></p>
+    <div id="project-search-results" data-result-count="{{ matching_count }}">
+    {% if q %}
+    <p class="project-search-summary u-sm u-muted">{{ matching_count }} matching project{{ '' if matching_count == 1 else 's' }} <a href="/{{ token }}/">Clear search</a></p>
+    {% endif %}
     <div class="panel">
       <div class="rows">
         {% for project in projects %}
-        <a class="row" href="/{{ token }}/projects/{{ project.project_id }}">
+        <a class="row project-home-row" href="/{{ token }}/projects/{{ project.project_id }}">
+          <span class="project-folder-icon">{{ workflow_icon('folder') }}</span>
           <span class="row-main">
             <strong class="row-title">{{ project.name }}</strong>
-            <span class="row-meta">Created {{ project.created_at }}</span>
-          </span>
+            <span class="row-meta">Created {{ project.created_at[:10] }} · {{ pdf_counts[project.project_id] }} PDF{{ '' if pdf_counts[project.project_id] == 1 else 's' }}</span>
+          </span><span aria-hidden="true" class="project-row-arrow">→</span>
         </a>
         {% else %}
         <div class="empty">
-          <p class="empty-title">No projects yet</p>
-          <p class="empty-text">Create a project above to get started.</p>
+          <span class="empty-icon">{{ workflow_icon('search' if total_projects else 'folder') }}</span>
+          <p class="empty-title">{{ 'No matching projects' if total_projects else 'No projects yet' }}</p>
+          <p class="empty-text">{{ 'Try another name or clear the search.' if total_projects else 'Create a project above to get started.' }}</p>
         </div>
         {% endfor %}
       </div>
+      {% if matching_count %}
+      <nav class="panel-foot project-pagination" aria-label="Project pages">
+        <span class="u-xs u-muted">{{ first_project }}–{{ last_project }} of {{ matching_count }} projects</span>
+        {% if total_pages > 1 %}
+        <span class="u-xs u-muted">Page {{ page }} of {{ total_pages }}</span>
+        {% if page > 1 %}<a class="btn" data-variant="outline" data-size="sm" href="{{ previous_url }}">Previous</a>{% else %}<button class="btn" data-variant="outline" data-size="sm" disabled>Previous</button>{% endif %}
+        {% if page < total_pages %}<a class="btn" data-variant="outline" data-size="sm" href="{{ next_url }}">Next</a>{% else %}<button class="btn" data-variant="outline" data-size="sm" disabled>Next</button>{% endif %}
+        {% endif %}
+      </nav>
+      {% endif %}
+    </div>
     </div>
   </section>
 </div>

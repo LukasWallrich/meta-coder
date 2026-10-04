@@ -7,11 +7,10 @@
 # needs to be manually removed first.
 #
 # Usage:
-#   curl -fsSL <release-base-url>/install.sh | sh
+#   curl -fsSL https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.sh | bash
 # Configuration (env vars):
 #   META_CODER_RELEASE_BASE_URL  Where release bundles + latest.txt live.
-#                                 REQUIRED — see the error below for why this
-#                                 has no built-in default yet.
+#                                 Optional override for mirrors/testing.
 #   META_CODER_VERSION           Install this exact version instead of latest.
 set -euo pipefail
 
@@ -19,33 +18,28 @@ app_name="MetaCoder"
 app_slug="meta-coder"
 data_dir_name="Meta-Coder"
 
-# --- 1. Where do bundles come from? ------------------------------------
-# There is no hosted release feed yet (no GitHub repo/releases configured for
-# this project). Point this at wherever `dist/meta-coder-<version>.tar.gz`
-# (from build_release.sh) and a `latest.txt` containing the newest version
-# number get published — e.g. a GitHub Releases download URL once one exists.
-base_url="${META_CODER_RELEASE_BASE_URL:-}"
-if [ -z "$base_url" ]; then
-  echo "error: META_CODER_RELEASE_BASE_URL is not set." >&2
-  echo "       This installer has no release feed configured yet — set it to" >&2
-  echo "       wherever release bundles are published (see scripts/build_release.sh)" >&2
-  echo "       and re-run, e.g.:" >&2
-  echo "         META_CODER_RELEASE_BASE_URL=https://github.com/<org>/<repo>/releases/latest/download sh install.sh" >&2
-  exit 1
-fi
+# --- 1. Public GitHub releases (or an explicitly configured mirror) --------
+base_url="${META_CODER_RELEASE_BASE_URL:-https://github.com/shaheedazaad/meta-coder/releases/latest/download}"
 base_url="${base_url%/}"
+download_asset() {
+  local name="$1" output="$2" download_base="$base_url"
+  if [ -z "${META_CODER_RELEASE_BASE_URL:-}" ] && [ -n "${version:-}" ]; then
+    download_base="https://github.com/shaheedazaad/meta-coder/releases/download/v$version"
+  fi
+  curl -fsSL "$download_base/$name" -o "$output"
+}
 
 # --- 2. Which version? ---------------------------------------------------
 version="${META_CODER_VERSION:-}"
 if [ -z "$version" ]; then
-  version="$(curl -fsSL "$base_url/latest.txt")" || {
-    echo "error: could not fetch $base_url/latest.txt to determine the latest version." >&2
+  version="$(download_asset latest.txt -)" || {
+    echo "error: could not resolve the latest release. Check your connection and whether a stable release has been published." >&2
     exit 1
   }
 fi
 version="$(printf '%s' "$version" | tr -d '[:space:]')"
-if [ -z "$version" ]; then
-  echo "error: resolved an empty version string." >&2
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: expected a stable version like 0.1.0." >&2
   exit 1
 fi
 echo "Installing $app_name $version..."
@@ -65,8 +59,8 @@ launcher="$bin_dir/meta-coder"
 mkdir -p "$install_dir" "$bin_dir"
 tmp_tarball="$(mktemp)"
 trap 'rm -f "$tmp_tarball"' EXIT
-curl -fsSL "$base_url/meta-coder-$version.tar.gz" -o "$tmp_tarball" || {
-  echo "error: could not download $base_url/meta-coder-$version.tar.gz" >&2
+download_asset "meta-coder-$version.tar.gz" "$tmp_tarball" || {
+  echo "error: could not download meta-coder-$version.tar.gz" >&2
   exit 1
 }
 tar -xzf "$tmp_tarball" -C "$install_dir" --strip-components=1
@@ -92,7 +86,7 @@ pixi install --manifest-path "$install_dir/pyproject.toml" --locked
 # --- 7. Launcher shim ------------------------------------------------------
 cat > "$launcher" <<EOF
 #!/usr/bin/env bash
-exec pixi run --manifest-path "$install_dir/pyproject.toml" start "\$@"
+exec "$(command -v pixi)" run --locked --manifest-path "$install_dir/pyproject.toml" start "\$@"
 EOF
 chmod +x "$launcher"
 

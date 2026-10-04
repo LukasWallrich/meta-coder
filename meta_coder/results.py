@@ -96,6 +96,8 @@ def render_pdf_audit_yaml(
         effects[row.row_id] = entry
 
     data: dict[str, Any] = {"source_pdf": source_pdf, "status": result.status}
+    if result.audit_operation_id:
+        data["audit_operation_id"] = result.audit_operation_id
     if result.repaired_response is not None:
         data["json_repaired"] = True
     if result.error:

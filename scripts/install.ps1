@@ -5,11 +5,10 @@
 # launcher on the current user's PATH (no admin rights required).
 #
 # Usage:
-#   irm <release-base-url>/install.ps1 | iex
+#   irm https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.ps1 | iex
 # Configuration (environment variables):
 #   META_CODER_RELEASE_BASE_URL  Where release bundles + latest.txt live.
-#                                 REQUIRED — see the error below for why this
-#                                 has no built-in default yet.
+#                                 Optional override for mirrors/testing.
 #   META_CODER_VERSION           Install this exact version instead of latest.
 
 $ErrorActionPreference = "Stop"
@@ -17,27 +16,30 @@ $ErrorActionPreference = "Stop"
 $AppName = "MetaCoder"
 $DataDirName = "Meta-Coder"
 
-# --- 1. Where do bundles come from? ---------------------------------------
+# --- 1. Public GitHub releases (or an explicitly configured mirror) --------
 $BaseUrl = $env:META_CODER_RELEASE_BASE_URL
 if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
-    Write-Error @"
-META_CODER_RELEASE_BASE_URL is not set.
-This installer has no release feed configured yet — set it to wherever
-release bundles are published (see scripts/build_release.sh) and re-run, e.g.:
-  `$env:META_CODER_RELEASE_BASE_URL = "https://github.com/<org>/<repo>/releases/latest/download"
-  irm <that-url>/install.ps1 | iex
-"@
-    exit 1
+    $BaseUrl = "https://github.com/shaheedazaad/meta-coder/releases/latest/download"
 }
-$BaseUrl = $BaseUrl.TrimEnd("/")
+function Get-ReleaseAsset([string]$Name, [string]$OutputPath) {
+    $DownloadBase = $BaseUrl.TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($env:META_CODER_RELEASE_BASE_URL) -and $Version) {
+        $DownloadBase = "https://github.com/shaheedazaad/meta-coder/releases/download/v$Version"
+    }
+    Invoke-WebRequest -UseBasicParsing "$DownloadBase/$Name" -OutFile $OutputPath
+}
 
 # --- 2. Which version? ------------------------------------------------------
 $Version = $env:META_CODER_VERSION
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = (Invoke-WebRequest -UseBasicParsing "$BaseUrl/latest.txt").Content.Trim()
+    $VersionFile = [System.IO.Path]::GetTempFileName()
+    try {
+        Get-ReleaseAsset "latest.txt" $VersionFile
+        $Version = (Get-Content -Raw $VersionFile).Trim()
+    } finally { Remove-Item $VersionFile -Force }
 }
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    Write-Error "Resolved an empty version string."
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    Write-Error "Expected a stable version like 0.1.0."
     exit 1
 }
 Write-Host "Installing $AppName $Version..."
@@ -53,9 +55,10 @@ $Launcher = Join-Path $BinDir "meta-coder.cmd"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 $TmpTarball = Join-Path $env:TEMP "meta-coder-$Version.tar.gz"
-Invoke-WebRequest -UseBasicParsing "$BaseUrl/meta-coder-$Version.tar.gz" -OutFile $TmpTarball
+Get-ReleaseAsset "meta-coder-$Version.tar.gz" $TmpTarball
 # tar.exe ships built in since Windows 10 1803 — no separate archive tool needed.
 tar -xzf $TmpTarball -C $InstallDir --strip-components=1
+if ($LASTEXITCODE -ne 0) { throw "Release extraction failed." }
 Remove-Item $TmpTarball -Force
 
 # --- 5. Bootstrap Pixi if this machine doesn't have it yet -----------------
@@ -73,10 +76,12 @@ if (-not (Get-Command pixi -ErrorAction SilentlyContinue)) {
 # --locked (not --frozen) so a bundle whose pixi.lock doesn't actually match
 # its own manifest fails loudly here rather than silently resolving fresh.
 pixi install --manifest-path (Join-Path $InstallDir "pyproject.toml") --locked
+if ($LASTEXITCODE -ne 0) { throw "Locked environment installation failed." }
 
 # --- 7. Launcher shim --------------------------------------------------------
 $ManifestPath = Join-Path $InstallDir "pyproject.toml"
-Set-Content -Path $Launcher -Value "@echo off`r`npixi run --manifest-path `"$ManifestPath`" start %*"
+$PixiPath = (Get-Command pixi).Source
+Set-Content -Path $Launcher -Value "@echo off`r`n`"$PixiPath`" run --locked --manifest-path `"$ManifestPath`" start %*"
 
 # --- 8. Drop stale versions — "re-running the installer updates in place" --
 Get-ChildItem -Path $AppRoot -Directory | Where-Object { $_.Name -ne $Version } | Remove-Item -Recurse -Force

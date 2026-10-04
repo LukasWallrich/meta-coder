@@ -1,0 +1,32 @@
+site_name: MetaCoder Guide
+site_url: https://shaheedazaad.github.io/meta-coder/
+repo_url: https://github.com/shaheedazaad/meta-coder
+site_description: A practical guide to coding studies with MetaCoder.
+docs_dir: docs/content
+site_dir: meta_coder/documentation
+use_directory_urls: true
+theme:
+  name: null
+  custom_dir: docs/theme
+plugins: []
+hooks:
+  - docs/hooks.py
+markdown_extensions:
+  - fenced_code
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+nav:
+  - Getting started: index.md
+  - Connections and settings: settings.md
+  - Define your analysis: analysis.md
+  - Coding manual: manual.md
+  - Coding sheet: coding-sheet.md
+  - Source PDFs: sources.md
+  - PDF matching: matching.md
+  - Run extraction: run.md
+  - Review and export: results.md
+  - Audit and reproducibility: auditing.md
+  - Project settings: projects.md
+  - Troubleshooting: troubleshooting.md

@@ -5,7 +5,7 @@
   <nav class="breadcrumb" aria-label="Breadcrumb">
     <ol><li><a href="/{{ token }}/projects/{{ project.project_id }}?tab=results">{{ project.name }} results</a></li><li aria-current="page">Raw output</li></ol>
   </nav>
-  <div class="page-head"><div><h1>Raw model output</h1><p>Stored response, formatted as YAML for inspection.</p></div></div>
-  <pre class="raw-yaml" aria-label="Raw model output as YAML">{{ raw_yaml }}</pre>
+  <div class="page-head"><div><h1>Raw model output</h1><p>Latest parsed result and response text, formatted as YAML for inspection. Full request and response history is included in the audit ZIP.</p></div></div>
+  <pre tabindex="0" class="raw-yaml" aria-label="Raw model output as YAML">{{ raw_yaml }}</pre>
 </div>
 {% endblock %}

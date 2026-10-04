@@ -1,0 +1,44 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate stable tag and package versions
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re, tomllib
+          from meta_coder import __version__
+          with open('pyproject.toml', 'rb') as f:
+              version = tomllib.load(f)['project']['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Use a stable X.Y.Z version'
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag must match pyproject.toml'
+          assert __version__ == version, 'Package version must match pyproject.toml'
+          PY
+      - run: pip install -e '.[docs]'
+      - run: bash scripts/build_release.sh "$GITHUB_SHA"
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "MetaCoder $RELEASE_TAG" --generate-notes
+          gh release edit "$RELEASE_TAG" --draft=false --latest

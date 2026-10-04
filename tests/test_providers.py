@@ -155,3 +155,28 @@ def test_openrouter_manual_draft_request_is_text_only_and_structured(monkeypatch
 
     assert captured["messages"][0]["content"] == [{"type": "text", "text": "manual text"}]
     assert captured["response_format"]["json_schema"]["schema"] == {"type": "object"}
+
+
+@pytest.mark.parametrize('provider', providers.PROVIDERS)
+def test_extraction_dispatches_only_supported_options(provider, monkeypatch, tmp_path):
+    import threading
+    from unittest.mock import Mock
+    from meta_coder.extraction import ExtractionResult
+    adapter = getattr(providers, provider)
+    result = ExtractionResult(source_pdf='paper.pdf', status='ok')
+    extract = Mock(return_value=result)
+    monkeypatch.setattr(adapter, 'extract_pdf_effects', extract)
+    cancel = threading.Event()
+    assert providers.extract_pdf_effects(provider=provider, pdf_path=tmp_path / 'paper.pdf', manual=None, rows=[], api_key='key', model='model', timeout_sec=99, service_tier='standard', reasoning_effort='high', base_url='http://localhost/v1', response_format='none', cancel_event=cancel) is result
+    args = extract.call_args.kwargs
+    assert args['timeout_sec'] == 99 and args['cancel_event'] is cancel
+    assert ('service_tier' in args) == (provider == 'gemini')
+    assert ('reasoning_effort' in args) == (provider != 'gemini')
+    assert ('base_url' in args) == (provider == 'openai_compatible')
+
+
+def test_unknown_provider_rejected_before_extraction_or_drafting(tmp_path):
+    with pytest.raises(ValueError, match='Unknown provider'):
+        providers.extract_pdf_effects(provider='unknown', pdf_path=tmp_path / 'p.pdf', manual=None, rows=[], api_key='', model='m')
+    with pytest.raises(ValueError, match='Unknown provider'):
+        providers.draft_coding_manual(provider='unknown', document_text='manual', api_key='', model='m')

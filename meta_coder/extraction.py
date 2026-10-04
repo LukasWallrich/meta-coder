@@ -41,6 +41,18 @@ def parse_json_response(raw_text: str) -> tuple[object, str | None]:
             ) from repair_exc
 
 
+class ResponseBytes(bytes):
+    """Bytes with a small, safe subset of transport metadata for the audit log."""
+    def __new__(cls, data, response):
+        value = super().__new__(cls, data)
+        value.status = getattr(response, 'status', None)
+        headers = getattr(response, 'headers', {}) or {}
+        value.audit_headers = {key: str(val) for key, val in headers.items() if key.lower() in {
+            'content-type', 'date', 'x-request-id', 'request-id', 'x-goog-request-id', 'retry-after',
+        }}
+        return value
+
+
 def cancellable_urlopen(
     request: Request, *, timeout: int, cancel_event: threading.Event
 ) -> bytes:
@@ -54,7 +66,7 @@ def cancellable_urlopen(
             response = urlopen(request, timeout=timeout)
             response_holder.append(response)
             try:
-                result.put((response.read(), None))
+                result.put((ResponseBytes(response.read(), response), None))
             finally:
                 response.close()
         except BaseException as exc:  # pass provider/network errors to caller
@@ -74,7 +86,7 @@ def cancellable_urlopen(
             if cancel_event.is_set():
                 raise ExtractionCancelled("Extraction cancelled by user.")
             raise error
-        return body or b""
+        return body if body is not None else b""
 
 
 @dataclass
@@ -90,3 +102,4 @@ class ExtractionResult:
     duration_sec: float = 0.0
     input_tokens: int | None = None
     output_tokens: int | None = None
+    audit_operation_id: str | None = None

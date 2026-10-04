@@ -1,11 +1,13 @@
 {% extends "base.html" %}
+{% from "_icons.html" import workflow_icon %}
 {% block title %}Settings · MetaCoder{% endblock %}
 {% block content %}
-<div class="page page-narrow">
+<div class="page page-narrow settings-page">
   <div class="page-head">
+    <a class="btn docs-help-link" data-variant="ghost" data-size="sm" href="/{{ token }}/docs/settings/" target="_blank" rel="noopener">Settings guide ↗<span class="u-visually-hidden"> (opens in a new tab)</span></a>
     <div>
-      <h1>Settings</h1>
-      <p>Global configuration, persisted and shared across every project.</p>
+      <h1 class="icon-heading">{{ workflow_icon("manage") }}Settings</h1>
+      <p>Connections and drafting preferences shared across your projects.</p>
     </div>
   </div>
 
@@ -15,15 +17,14 @@
   </div>
   {% endif %}
 
-  <section class="section">
+  <section class="section accent-section accent-cyan">
     <div class="section-head">
       <div>
-        <h2>API keys</h2>
+        <h2 class="icon-heading">{{ workflow_icon("key") }}Provider configuration</h2>
         <p>
-          One key per provider, used across every project. Every key is saved securely
-          in the operating system credential store; session-only keys are not accepted.
+          Connect the providers you use. API keys are saved in your system credential store.
           {% if keyring_available %}
-          Saved keys remain locked after restart and can be unlocked when needed.
+          Keychain access is requested when you run an action that needs a key, never on launch.
           {% else %}
           This system's credential store is currently unavailable, so API keys cannot be added.
           {% endif %}
@@ -31,42 +32,66 @@
       </div>
     </div>
 
-    <div class="grid-2">
+    <div class="panel" id="provider-configuration">
       {% for provider in providers %}
-      <div class="panel panel-pad stack-sm">
-        <div class="cluster-between">
-          <h3 style="margin:0; font-size:var(--text-sm); font-weight:600">{{ provider_labels.get(provider, provider) }}</h3>
+      <details class="provider-disclosure provider-{{ provider }}" id="config-{{ provider }}">
+        <summary class="cluster-between">
+          <h3 id="heading-{{ provider }}" class="provider-heading">{{ workflow_icon("key") }}{{ provider_labels.get(provider, provider) }}</h3>
           {% if keys[provider] %}
-          <span class="badge" data-variant="success">Unlocked</span>
+          <span class="badge" data-variant="success">Saved</span>
           {% elif saved_keys[provider] %}
-          <span class="badge" data-variant="warning">Saved · locked</span>
+          <span class="badge" data-variant="success">Saved</span>
           {% else %}
           <span class="badge" data-variant="outline">Not set</span>
           {% endif %}
-        </div>
+        </summary>
+        <div class="provider-body stack-sm">
         {% if provider == "gemini" %}
         <p class="u-xs u-muted" style="margin:0">
           Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary)">Google AI Studio</a>.
         </p>
+        {% elif provider == "openai_compatible" %}
+        <p class="u-xs u-muted">Save an API key here if your endpoint requires authentication. Leave it unset only for servers that allow keyless requests. Configure the API base URL below.</p>
         {% elif provider == "openrouter" %}
         <p class="u-xs u-muted" style="margin:0">
           Get a key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--primary)">openrouter.ai</a>.
         </p>
         {% endif %}
 
-        <form method="post" action="/{{ token }}/settings/api-key" class="cluster" style="flex-wrap:nowrap">
-          <input type="password" name="api_key" placeholder="Paste your {{ provider_labels.get(provider, provider) }} API key"
-                 class="input" style="flex:1; min-width:0" required {% if not keyring_available %}disabled{% endif %}>
-          <input type="hidden" name="provider" value="{{ provider }}">
-          <button type="submit" class="btn" data-size="sm" {% if not keyring_available %}disabled{% endif %}>Save securely</button>
-        </form>
-
-        {% if not keys[provider] and saved_keys[provider] and keyring_available %}
-        <form method="post" action="/{{ token }}/settings/api-key/unlock">
-          <input type="hidden" name="provider" value="{{ provider }}">
-          <button type="submit" class="btn" data-variant="outline" data-size="sm">Unlock from Keychain</button>
-        </form>
+        {% if saved_keys[provider] %}
+        <p class="u-xs u-muted" style="margin:0">Saved in Keychain. Access will be requested when needed. Leave the key field blank to keep it.</p>
         {% endif %}
+        <form method="post" action="/{{ token }}/settings/{{ 'openai-compatible' if provider == 'openai_compatible' else 'api-key' }}" class="provider-key-form {{ 'provider-endpoint-form' if provider == 'openai_compatible' else 'provider-simple-form' }}">
+          <input type="hidden" name="provider" value="{{ provider }}">
+          <div class="field">
+            <label for="api-key-{{ provider }}">API key{% if provider == 'openai_compatible' %} (if required by your server){% endif %}</label>
+            <input type="password" id="api-key-{{ provider }}" name="api_key" autocomplete="off"
+                   placeholder="{{ 'Saved in Keychain — enter a new key to replace' if saved_keys[provider] else 'Paste your API key' }}"
+                   class="input" {% if provider != 'openai_compatible' %}required{% endif %} {% if not keyring_available %}disabled{% endif %}>
+          </div>
+          {% if provider == "openai_compatible" %}
+        <div class="field">
+          <label for="openai-base-url">OpenAI-compatible API base URL</label>
+          <input type="url" id="openai-base-url" name="openai_base_url" value="{{ app_settings.openai_base_url }}"
+                 placeholder="http://localhost:8000/v1" class="input u-mono">
+          <p class="u-xs u-muted">Shared by extraction and manual drafting. Include the API prefix (such as /v1), without /chat/completions. Enter the exact model ID in the model field. When switching endpoints, replace or remove the saved key too.</p>
+        </div>
+        <div class="field">
+          <label for="openai-response-format">OpenAI-compatible JSON output mode</label>
+          <select id="openai-response-format" name="openai_response_format" class="select">
+            {% for value, label in [('json_schema', 'Strict JSON schema'), ('json_object', 'JSON object'), ('none', 'Prompt only')] %}
+            <option value="{{ value }}" {% if app_settings.openai_response_format == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <p class="u-xs u-muted">Use a mode supported by your endpoint. All responses are validated. PDFs are sent as locally extracted text with page numbers; figures and scanned pages need OCR or a provider with native PDF support.</p>
+        </div>
+          {% endif %}
+          <div>
+            <button type="submit" class="btn" data-size="sm" {% if not keyring_available and provider != 'openai_compatible' %}disabled{% endif %}>
+              {{ 'Save endpoint and key' if provider == 'openai_compatible' else 'Save key to Keychain' }}
+            </button>
+          </div>
+        </form>
 
         {% if keys[provider] or saved_keys[provider] %}
         <details>
@@ -78,23 +103,24 @@
           </form>
         </details>
         {% endif %}
-      </div>
+        </div>
+      </details>
       {% endfor %}
     </div>
   </section>
 
-  <section class="section">
+  <section class="section accent-section accent-purple">
     <div class="section-head">
       <div>
-        <h2>Coding manual generator</h2>
+        <h2 class="icon-heading">{{ workflow_icon("spark") }}Drafting model</h2>
         <p>
-          Used only to turn uploaded PDF/DOCX coding manuals into editor drafts. It is
-          independent of every project's coding/extraction provider and model.
+          Used for document-to-manual drafts and coding sheet conversion. Extraction is configured separately in each project.
         </p>
       </div>
     </div>
     <div class="panel panel-pad">
-      <form method="post" action="/{{ token }}/settings/app" class="stack">
+      <form method="post" action="/{{ token }}/settings/app" class="stack" id="manual-generator-settings">
+        <script id="manual-provider-defaults" type="application/json">{{ provider_default_models | tojson }}</script>
         <div class="grid-2">
           <div class="field">
             <label for="manual-generator-provider">Provider</label>
@@ -112,6 +138,7 @@
                    value="{{ app_settings.manual_generator_model }}" class="input u-mono" required>
           </div>
         </div>
+        {% if grobid_settings_enabled %}
         <div class="field">
           <label for="grobid-url">GROBID server URL (optional)</label>
           <input type="text" id="grobid-url" name="grobid_url" value="{{ app_settings.grobid_url }}"
@@ -121,13 +148,14 @@
             Leave blank to use the built-in filename/text heuristic.
           </p>
         </div>
+        {% endif %}
         <div class="cluster" style="justify-content:space-between">
           <div class="field field-max">
             <label for="upload-size-cap">Max document upload size (MB)</label>
             <input type="number" id="upload-size-cap" name="upload_size_cap_mb" value="{{ app_settings.upload_size_cap_mb }}"
                    min="1" max="1024" class="input">
           </div>
-          <button type="submit" class="btn">Save global settings</button>
+          <button type="submit" class="btn">Save drafting preferences</button>
         </div>
       </form>
     </div>

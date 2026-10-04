@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheetRow
+from .provenance import audited_transport
 from .extraction import (
     ExtractionCancelled,
     ExtractionResult,
@@ -167,15 +168,22 @@ def _call_openrouter_content(
         payload["reasoning"] = {"effort": reasoning_effort}
 
     last_error: ProviderError | None = None
+    raw_response = ""
     for attempt in range(1, MAX_RETRIES + 1):
         request = _request(
             f"{API_BASE}/chat/completions", api_key=api_key, body=payload, method="POST"
         )
         try:
-            raw_body = cancellable_urlopen(
+            raw_body = audited_transport(cancellable_urlopen,
                 request, timeout=timeout_sec, cancel_event=cancel_event or threading.Event()
             )
-            body = json.loads(raw_body.decode("utf-8"))
+            raw_response = raw_body.decode("utf-8", errors="replace")
+            try:
+                body = json.loads(raw_response)
+            except json.JSONDecodeError as exc:
+                raise ProviderError(
+                    f"OpenRouter returned invalid response JSON: {exc}", raw_response=raw_response
+                ) from exc
             break
         except urllib.error.HTTPError as exc:
             if cancel_event and cancel_event.is_set():
@@ -195,7 +203,6 @@ def _call_openrouter_content(
     else:  # pragma: no cover - loop always breaks or raises above
         raise last_error or ProviderError("OpenRouter request failed for an unknown reason.")
 
-    raw_response = json.dumps(body)
     if not isinstance(body, dict):
         raise ProviderError("OpenRouter returned an invalid response object.", raw_response=raw_response)
     choices = body.get("choices") or []
