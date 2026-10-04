@@ -6,31 +6,41 @@ MetaCoder helps you code meta-analysis studies with an LLM and review the eviden
 
 ## Install or update
 
-Install the latest stable [GitHub release](https://github.com/shaheedazaad/meta-coder/releases/latest) using the commands below. Python and dependencies are managed automatically with Pixi.
+The installer sets up MetaCoder and everything it needs on your computer. You do not need to install programming tools separately.
 
-**macOS / Linux** — run in a terminal:
+**macOS / Linux** — open **Terminal**, copy and paste this command, then press **Enter**:
 
 ```bash
 curl -fsSL https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.sh | bash
 ```
 
-**Windows** — run in PowerShell:
+**Windows** — open **PowerShell** from the Start menu, copy and paste this command, then press **Enter**:
 
 ```powershell
 irm https://github.com/shaheedazaad/meta-coder/releases/latest/download/install.ps1 | iex
 ```
 
-Then run `meta-coder`. Follow the installer's PATH instructions if the command is not found.
+Wait for the installation to finish and follow any instructions it displays.
 
-To update, stop MetaCoder, rerun the same installer, and start it again. Your projects, preferences, and saved API keys are kept. Export a project ZIP first if you want a backup. The app checks GitHub for a newer stable release when a page opens, caching the result for six hours. An available update appears as an informational banner; offline checks fail silently. Checks read public release metadata without a GitHub login; no project data or AI provider credentials are sent.
+## Open MetaCoder
 
-For a specific version, set `META_CODER_VERSION` (for example, `0.1.0`) before running the installer. `META_CODER_RELEASE_BASE_URL` optionally overrides the download location for mirrors and testing.
+Open a new Terminal or PowerShell window, type the following, and press **Enter**:
 
-## Start from source
+```text
+meta-coder
+```
 
-From a source checkout, use `pixi run start`. If you use a Python environment instead, install with `pip install -e .` and run `python -m meta_coder`. The app opens a local browser window. Keep its terminal running while you work.
+MetaCoder runs on your computer and opens in your web browser. Keep the Terminal or PowerShell window open while you work. To stop MetaCoder, return to that window and press **Ctrl+C**.
 
-Use **Documentation** in the app header to open this guide. Each project section also has a link to the relevant page. Documentation is bundled locally and does not require an internet connection.
+If your computer does not recognise `meta-coder`, check the final installation message for the setup step needed to make the command available. You can ask your institution's IT support to help with that step.
+
+Use **Documentation** in the app header to open this guide. Each project section also links to the relevant page. The guide is included with the app on your computer, so you can read it without an internet connection.
+
+## Update MetaCoder
+
+When an update is available, MetaCoder displays a notification. Stop the app, repeat the installation command above for your operating system, and open MetaCoder again. Your projects, preferences, and saved API keys are kept. Export a project ZIP first if you want a backup.
+
+MetaCoder checks for updates when you open a page, at most once every six hours. Checking for updates does not send your research documents or API keys. If you are offline, you can continue working with the installed version; AI requests still need a connection to your chosen provider.
 
 ## Your first project
 
@@ -47,6 +57,6 @@ Use **Documentation** in the app header to open this guide. Each project section
 
 ## Where your work lives
 
-Projects and non-secret preferences are stored on this computer. API keys are stored separately in the system credential store. AI actions send the relevant documents or extracted text to the provider you choose; local project storage does not make those requests offline.
+Projects and non-secret preferences are stored on your computer. API keys are stored separately in your computer's built-in secure storage for passwords and other credentials. AI actions send the relevant documents or extracted text to the provider you choose; storing projects on your computer does not make those requests offline.
 
 Use [Project settings](projects.md) to export a ZIP backup. The light, dark, or system theme preference is shared between the app and its bundled guide.

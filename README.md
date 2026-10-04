@@ -1,6 +1,6 @@
 # MetaCoder
 
-Local browser app for LLM-assisted meta-analysis moderator coding.
+Browser app for LLM-assisted meta-analysis moderator coding that runs on your computer.
 
 > [!TIP]
 > **New to MetaCoder?** Read the [user guide](https://shaheedazaad.github.io/meta-coder/) for installation instructions and a walkthrough of the full coding workflow.
@@ -143,7 +143,7 @@ bash scripts/uninstall.sh
 On Windows, run `./scripts/uninstall.ps1` in PowerShell. These scripts remove
 all release versions and the installer's launcher; the Windows script also
 removes its user PATH entry. They can safely be run again after uninstalling.
-Projects, settings, saved API keys in the OS credential store, and Pixi are kept.
+Projects, settings, saved API keys in your computer's OS credential store, and Pixi are kept.
 `META_CODER_HOME` overrides are left untouched. On Linux, use the same
 `XDG_DATA_HOME` value you used when installing.
 
@@ -155,7 +155,7 @@ using the Python environment where you installed it instead.
 1. Create a project.
 2. Set an API key in **Settings**: paste a Gemini key (get one at
    [Google AI Studio](https://aistudio.google.com/app/apikey)) or an OpenRouter key
-   ([openrouter.ai](https://openrouter.ai/settings/keys)). Keys are saved in the
+   ([openrouter.ai](https://openrouter.ai/settings/keys)). Keys are saved in your computer's
    OS credential store (macOS Keychain / Windows Credential Locker / Linux Secret
    Service). After restart, keychain access is requested when you run an action
    that needs a key, never on launch. There is no separate unlock step or plaintext fallback.
@@ -275,7 +275,7 @@ exact model ID served by your endpoint, and save. The manual generator has its
 own provider/model selection in Settings.
 
 Save an API key under **OpenAI-compatible** if the server requires authentication;
-local servers can run without one. Keys use the same OS credential store as the
+local servers can run without one. Keys use the same OS credential store on your computer as the
 other providers. Unlock a saved key before running. When switching endpoints,
 replace or remove the old key as appropriate.
 
@@ -286,7 +286,7 @@ prompt-only mode omits `response_format`. All results still undergo MetaCoder's
 row and field validation. Model IDs are accepted without requiring a `/models`
 catalog; availability is checked when a request runs.
 
-This provider sends locally extracted PDF text with page numbers, rather than
+This provider extracts PDF text on your computer and sends it with page numbers, rather than
 PDF attachments. Figures and scanned pages are not interpreted; run OCR first or
 use a provider with native PDF support. PDFs with no extractable text fail with an
 explicit error. Requests retain timeout, cancellation, transient-error retries,

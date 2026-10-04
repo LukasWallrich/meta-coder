@@ -12,7 +12,7 @@ Next, open [PDF matching](matching.md) to resolve missing matches. A PDF with no
 
 ## Check document quality
 
-For OpenAI-compatible extraction, MetaCoder extracts text locally and adds page numbers. Image-only scans and figures may not provide enough text. Use searchable PDFs, OCR the documents, or choose an appropriate provider with native PDF support.
+For OpenAI-compatible extraction, MetaCoder extracts text on your computer and adds page numbers. Image-only scans and figures may not provide enough text. Use searchable PDFs, OCR the documents, or choose an appropriate provider with native PDF support.
 
 ## Remove a source
 

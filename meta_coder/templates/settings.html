@@ -22,11 +22,11 @@
       <div>
         <h2 class="icon-heading">{{ workflow_icon("key") }}Provider configuration</h2>
         <p>
-          Connect the providers you use. API keys are saved in your system credential store.
+          Connect the providers you use. API keys are saved in your computer's system credential store.
           {% if keyring_available %}
           Keychain access is requested when you run an action that needs a key, never on launch.
           {% else %}
-          This system's credential store is currently unavailable, so API keys cannot be added.
+          Your computer's system credential store is currently unavailable, so API keys cannot be added.
           {% endif %}
         </p>
       </div>
@@ -83,7 +83,7 @@
             <option value="{{ value }}" {% if app_settings.openai_response_format == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
-          <p class="u-xs u-muted">Use a mode supported by your endpoint. All responses are validated. PDFs are sent as locally extracted text with page numbers; figures and scanned pages need OCR or a provider with native PDF support.</p>
+          <p class="u-xs u-muted">Use a mode supported by your endpoint. All responses are validated. PDF text is extracted on your computer and sent with page numbers; figures and scanned pages need OCR or a provider with native PDF support.</p>
         </div>
           {% endif %}
           <div>

@@ -6,49 +6,27 @@ Choose **Download audit ZIP** on Results, or **Download project and audit** in P
 
 | Record | Included information |
 | --- | --- |
-| Application | App version, source fingerprint and source ZIP, installed dependency versions, Python version, and platform |
+| Application | App version, a copy of the application code, and details of the software environment used |
 | Run | Selected PDFs, provider/model, pacing and parallelism, settings, final statuses, coded-data and evidence CSV snapshots |
 | Inputs | Saved manual and coding sheet plus effective inputs passed to the action, original study PDFs or uploaded draft documents, conversion notes |
-| Each request | UTC start/end timestamps, endpoint without authentication, exact request body with prompts, schema, model ID, and explicitly supplied generation settings |
-| Each response | Full response envelope, original response text, provider-reported model/version, response ID, fingerprint and usage when supplied |
-| Outcomes | Parsed/validated result, repaired JSON where applicable, errors, retries, and linkage from current results to the corresponding operation |
+| Each request | Start and finish times, provider address, exact instructions and requested output format, selected model, and settings sent to the provider |
+| Each response | Original response and any model version, request identifier, or usage details supplied by the provider |
+| Outcomes | Validated result, any response-format repairs, errors, retries, and links between results and the actions that produced them |
 | Export | Export timestamp, project identity, current run settings, and SHA-256 checksums for every other file in the ZIP |
 
 All roles and prompts the app sends are in the request body. Native PDF request bodies include the encoded PDF; text-based requests include the extracted text exactly as sent. Server-side prompts or processing that a provider does not return cannot be captured.
 
-AI manual drafting and coding-sheet conversion are recorded even if you discard the generated draft. Automatic HTTP retries have separate exchange records; an explicit extraction retry creates a new operation. The working result files may be replaced, but the earlier audit records remain.
+AI manual drafting and coding-sheet conversion are recorded even if you discard the generated draft. Automatic retries are recorded separately; choosing to retry extraction also creates a new record. The working result files may be replaced, but the earlier audit records remain.
 
-## Read the archive
+## Keep a record of your analysis
 
-Unzip the export and open `export_manifest.json`. Every entry in `files` has a checksum and byte count. Blob paths in audit records are relative to the ZIP root.
+Wait for AI actions to finish, then download the audit ZIP and save it with your research materials. You do not need to run code or install additional software to keep this record. Export another copy after later changes or retries if you want to preserve those too.
 
-- `audit/operations/<id>/operation.json` identifies an action and references its app source, inputs, and result.
-- `exchange-0001.json`, `exchange-0002.json`, and so on describe the individual HTTP attempts for that action.
-- `audit/blobs/<sha256>` contains the referenced bytes. Shared inputs are stored once, so these files do not have extensions. Read the record to see whether the blob is JSON, a PDF, CSV, original uploaded document, or the application source ZIP.
-- An `extraction_run` operation groups per-PDF operations through their `settings.run_id`. Its `final_results.json` input includes carried-over results from previous runs.
-- Current per-PDF JSON/YAML results contain `audit_operation_id` when provenance is available.
+For everyday checking, use the [Results page](results.md) to review coded values, supporting evidence, and the original AI responses. The ZIP also contains detailed records that a collaborator or technical reviewer can use to investigate how a result was produced.
 
-An `in_progress` record with no finish time means the process was interrupted or the export was taken while the action was still running. It does not establish that the provider completed the request. Export after actions finish for a complete record.
+The file named `export_manifest.json` lists the exported files and their checksums. A checksum is a value calculated from a file's contents; a reviewer can use it to check whether that file has changed. It is not a digital signature or independent proof of when the work was performed.
 
-## Verify an export
-
-After unzipping, run this Python snippet from the extracted directory:
-
-```python
-import hashlib
-import json
-from pathlib import Path
-
-root = Path.cwd()
-manifest = json.loads((root / "export_manifest.json").read_text())
-for name, expected in manifest["files"].items():
-    content = (root / name).read_bytes()
-    assert len(content) == expected["bytes"], name
-    assert hashlib.sha256(content).hexdigest() == expected["sha256"], name
-print("All exported file checksums match.")
-```
-
-Checksums detect changed bytes relative to the manifest; they are not a digital signature or independent proof of when the work was performed.
+An unfinished action may appear in an export taken while it is still running. That record does not establish that the provider completed the request. Export after actions finish for a complete record.
 
 ## Retention and credentials
 

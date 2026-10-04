@@ -20,7 +20,7 @@ Deleting a project removes its stored files, including its audit history. This i
 
 ## Data locations
 
-By default, app data is stored under:
+Use **Open project folder** in the app to find your files on your computer. The usual storage locations are:
 
 | Platform | Location |
 | --- | --- |
@@ -28,4 +28,4 @@ By default, app data is stored under:
 | Windows | `%LOCALAPPDATA%/Meta-Coder` |
 | Linux | `$XDG_DATA_HOME/meta-coder`, or `~/.local/share/meta-coder` |
 
-Projects are in the `projects` subdirectory. The `META_CODER_HOME` environment variable can override the app data location. API keys live separately in the operating system credential store.
+Projects are in the `projects` subdirectory. API keys live separately in your computer's operating system credential store.

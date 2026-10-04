@@ -6,13 +6,13 @@ Open **Settings** in the app header to configure provider connections and the mo
 
 ## Connect a provider
 
-Expand a provider under **Provider configuration**, enter its API key, then save. Keys are stored in the operating system credential store. After restarting the app, access is requested when an action needs the key, rather than on launch.
+Expand a provider under **Provider configuration**, enter its API key, then save. Keys are stored in your computer's operating system credential store. After restarting the app, access is requested when an action needs the key, rather than on launch.
 
 | Provider | Connection | Study PDF handling |
 | --- | --- | --- |
 | Gemini | Save a Gemini API key | Native PDF input |
 | OpenRouter | Save an OpenRouter API key | PDF input through the provider |
-| OpenAI-compatible | Save the API base URL and a key if required | Locally extracted text with page numbers |
+| OpenAI-compatible | Save the API base URL and a key if required | Text extracted on your computer, with page numbers |
 
 For an OpenAI-compatible endpoint, include the API prefix such as `/v1`, without `/chat/completions`. Enter the exact model ID in the relevant model field. When changing endpoints, replace or remove the old key too.
 
@@ -26,6 +26,6 @@ The maximum document upload size is configurable here, from 1 to 1,024 MB.
 
 ## Credential store unavailable
 
-If the system credential store is unavailable, key entry is disabled. Restore access to your operating system's credential service and restart the app. An OpenAI-compatible endpoint that genuinely allows keyless requests can still be configured without a saved key.
+If your computer's system credential store is unavailable, key entry is disabled. Restore access to your operating system's credential service and restart the app. An OpenAI-compatible endpoint that genuinely allows keyless requests can still be configured without a saved key.
 
 To remove a saved key, expand **Key removal** under its provider. Removing a key does not delete your projects.
