@@ -45,3 +45,6 @@ h2:hover .headerlink, h1:hover .headerlink, .headerlink:focus { opacity: 1; }
 .docs-sidebar summary::after { content: '+'; font-size: 1rem; color: var(--muted-foreground); }
 .docs-sidebar details[open] summary::after { content: '−'; }
 .docs-article :is(h1, h2, h3) { scroll-margin-top: 5rem; }
+.docs-repo-link { gap: .4rem; color: var(--muted-foreground); }
+.docs-repo-link:hover { color: var(--foreground); }
+@media (max-width: 760px) { .docs-repo-label { display: none; } }
