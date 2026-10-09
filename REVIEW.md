@@ -1,0 +1,5 @@
+# Gemini transient retries — review only
+
+Candidate policy retries HTTP 429/500/502/503/504 at most three times, with cancellation-aware exponential backoff. Numeric Retry-After is honored; a server request to wait longer than 30 seconds returns the error instead of retrying too soon. Every exchange goes through audited_transport and final errors still pass through Gemini's credential redaction. Permanent HTTP errors are not retried.
+
+Five new transport tests and the inherited suite pass (647 tests). No PR yet: decide on retry status codes, limits and cost policy; support HTTP-date Retry-After; integrate retries with the global request-start pacer and total request timeout rather than applying a full timeout per attempt. Replayed generation requests can duplicate provider charges. Test real audit exchange recording for several failed attempts, and add coverage for invalid/long Retry-After and cancellation before the first attempt. Network-error retry behavior is deliberately unchanged.

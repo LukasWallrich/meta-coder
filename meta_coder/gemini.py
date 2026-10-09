@@ -74,6 +74,36 @@ def check_model(model: str, *, api_key: str, timeout_sec: int = 20) -> list[str]
     return []
 
 
+MAX_ATTEMPTS = 3
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+
+
+def _gemini_transport(request, *, timeout_sec, cancel_event):
+    """Candidate bounded retry policy; each exchange stays in audit history."""
+    import math
+    event = cancel_event or threading.Event()
+    for attempt in range(MAX_ATTEMPTS):
+        if event.is_set():
+            raise ExtractionCancelled("Extraction cancelled by user.")
+        try:
+            return audited_transport(cancellable_urlopen, request, timeout=timeout_sec, cancel_event=event)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS - 1:
+                raise
+            delay = 0.5 * 2 ** attempt
+            try:
+                retry_after = float((exc.headers or {}).get("Retry-After", ""))
+                if math.isfinite(retry_after) and retry_after >= 0:
+                    if retry_after > 30:
+                        raise exc  # do not retry sooner than a long server request
+                    delay = max(delay, retry_after)
+            except (TypeError, ValueError):
+                pass
+            if event.wait(delay):
+                raise ExtractionCancelled("Extraction cancelled by user.") from exc
+    raise AssertionError("Retry loop exhausted without a terminal outcome")
+
+
 def _call_gemini_parts(
     *,
     model: str,
@@ -109,9 +139,7 @@ def _call_gemini_parts(
         method="POST",
     )
     try:
-        raw_body = audited_transport(cancellable_urlopen,
-            request, timeout=timeout_sec, cancel_event=cancel_event or threading.Event()
-        )
+        raw_body = _gemini_transport(request, timeout_sec=timeout_sec, cancel_event=cancel_event)
         raw_response = raw_body.decode("utf-8", errors="replace")
         try:
             body = json.loads(raw_response)
