@@ -90,6 +90,8 @@ def _result_from_raw_json(path: Path) -> ExtractionResult | None:
     return ExtractionResult(
         source_pdf=data["source_pdf"],
         audit_operation_id=data.get("audit_operation_id"),
+        provider=data.get("provider"),
+        model=data.get("model"),
         status=data.get("status") or "error",
         coded_by_row_id=data.get("coded_by_row_id") or {},
         missing_ids=set(data.get("missing_ids") or []),
@@ -368,6 +370,7 @@ class Runner:
                     **provider_kwargs,
                     cancel_event=state.cancel_event,
                 )
+                result.provider, result.model = provider, model
                 write_raw_result(project, result, provider=provider, model=model)
                 audit_yaml_path(project, progress.source_pdf).write_text(
                     render_pdf_audit_yaml(
@@ -379,7 +382,8 @@ class Runner:
                 # disk write error) must not abort the whole run and lose every
                 # other already-completed PDF's results — see collate below.
                 result = ExtractionResult(
-                    source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {exc}"
+                    source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {exc}",
+                    provider=provider, model=model,
                 )
                 try:
                     write_raw_result(project, result, provider=provider, model=model)
