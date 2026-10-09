@@ -175,3 +175,12 @@ def test_atomic_raw_failure_keeps_previous_result(inputs, monkeypatch):
         module.write_raw_result(project, ExtractionResult('paper.pdf', 'ok', raw_response='new'), provider='gemini', model='model')
     assert module.raw_json_path(project, 'paper.pdf').read_bytes() == previous
     assert not list(project.raw_dir.glob('*.tmp'))
+def test_audit_finalization_failure_is_visible(inputs, monkeypatch):
+    monkeypatch.setattr(module, 'extract_pdf_effects', Mock(return_value=ExtractionResult('paper.pdf', 'ok')))
+    audit = Mock()
+    audit.id = "test-run"
+    audit.finish.side_effect = OSError('audit disk full')
+    state = run_sync(inputs, monkeypatch, state={'audit_run': audit})
+    assert state.status == 'failed'
+    assert state.error == 'Could not finalize audit history: audit disk full'
+    assert module.load_persisted_results(inputs[0])['paper.pdf'].status == 'ok'
