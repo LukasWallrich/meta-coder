@@ -175,3 +175,12 @@ def test_atomic_raw_failure_keeps_previous_result(inputs, monkeypatch):
         module.write_raw_result(project, ExtractionResult('paper.pdf', 'ok', raw_response='new'), provider='gemini', model='model')
     assert module.raw_json_path(project, 'paper.pdf').read_bytes() == previous
     assert not list(project.raw_dir.glob('*.tmp'))
+
+
+def test_provider_and_error_record_persistence_failure_remain_visible(inputs, monkeypatch):
+    monkeypatch.setattr(module, 'extract_pdf_effects', Mock(side_effect=ValueError('provider failure')))
+    monkeypatch.setattr(module, 'write_raw_result', Mock(side_effect=OSError('disk full')))
+    state = run_sync(inputs, monkeypatch)
+    assert state.pdfs[0].status == 'error'
+    assert 'provider failure' in state.pdfs[0].error
+    assert state.processed == 1 and state.status == 'complete'
