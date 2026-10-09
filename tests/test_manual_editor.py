@@ -136,6 +136,18 @@ def test_reserved_field_names_are_rejected_in_yaml_and_editor(name, suggestion):
         manual_from_editor_payload({"effect_definition": "x", "effects": [{"name": name, "type": "string"}]})
 
 
+@pytest.mark.parametrize("name", ["Notes", "NOTES", " Notes "])
+def test_case_variants_of_builtin_notes_field_are_rejected(name):
+    with pytest.raises(ManualError, match="clashes with the built-in `notes` field"):
+        parse_coding_manual(_yaml_manual(f"  {name!r}: {{type: string}}\n"))
+    with pytest.raises(ManualError, match="clashes with the built-in `notes` field"):
+        manual_from_editor_payload({"effect_definition": "x", "effects": [{"name": name}]})
+    # Exact `notes` (after trimming) is still silently replaced by the built-in field.
+    manual = parse_coding_manual(_yaml_manual("  ' notes ': {type: boolean}\n  age: {}\n"))
+    assert list(manual.effects) == ["age", NOTES_FIELD_NAME]
+    assert manual.effects[NOTES_FIELD_NAME].type == "string"
+
+
 def test_reserved_name_lookalikes_are_allowed():
     manual = parse_coding_manual(_yaml_manual("  publication_year: {type: integer}\n  years_of_age: {}\n"))
     assert list(manual.effects) == ["publication_year", "years_of_age", NOTES_FIELD_NAME]

@@ -185,6 +185,14 @@ def _parse_section(raw: object, section: str, *, allow_empty: bool) -> dict[str,
                 f"adds to every export ({', '.join(BASE_COLUMNS)}). Rename the field, "
                 f"e.g. to `{suggestion}`."
             )
+        if key == NOTES_FIELD_NAME and field_name != NOTES_FIELD_NAME:
+            # Exact `notes` is silently replaced by the built-in field (see
+            # _build_manual_from_raw); a case variant would sit beside it.
+            raise ManualError(
+                f"{section}.{field_name}: `{field_name}` clashes with the built-in "
+                f"`{NOTES_FIELD_NAME}` field, which MetaCoder adds automatically. Remove "
+                "this field or give it a more specific name."
+            )
         if key in seen:
             raise ManualError(
                 f"`{section}` has fields named both `{seen[key]}` and `{field_name}`; "
