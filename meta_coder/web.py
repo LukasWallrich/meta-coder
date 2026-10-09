@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import Response, FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
@@ -1283,6 +1283,23 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="No results yet.")
         return FileResponse(path, media_type="text/csv", filename=f"{project.name}-evidence.csv")
+
+    @app.get(f"/{token}/projects/{{project_id}}/download/spreadsheet/{{kind}}")
+    def download_spreadsheet(project_id: str, kind: str):
+        from .results import collate_results, rows_to_spreadsheet_csv, rows_to_provenance_csv
+        project = runtime.project(project_id)
+        view = _project_view(runtime, project)
+        if view["manual"] is None:
+            raise HTTPException(status_code=409, detail="Fix the manual before exporting.")
+        results = load_persisted_results(project)
+        if kind == "provenance":
+            data = rows_to_provenance_csv(view["coding_sheet"], results).encode("utf-8")
+        elif kind in {"coded", "evidence"}:
+            coded, evidence = collate_results(manual=view["manual"], coding_sheet=view["coding_sheet"], results_by_pdf=results)
+            data = rows_to_spreadsheet_csv(coded if kind == "coded" else evidence, view["manual"])
+        else:
+            raise HTTPException(status_code=404, detail="Unknown export.")
+        return Response(data, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={kind}-spreadsheet.csv"})
 
     @app.get(f"/{token}/projects/{{project_id}}/audit/{{filename}}")
     async def view_audit(project_id: str, filename: str):

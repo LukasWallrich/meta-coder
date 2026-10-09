@@ -158,3 +158,6 @@ class ExtractionResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     audit_operation_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str | None = None

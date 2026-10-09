@@ -112,3 +112,36 @@ def render_pdf_audit_yaml(
     data["effects"] = effects
 
     return yaml.dump(data, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100)
+
+
+def rows_to_spreadsheet_csv(rows: list[dict[str, str]], manual: CodingManual) -> bytes:
+    """Explicit Excel-oriented variant; never alter canonical research CSVs."""
+    import re
+    number = re.compile(r'^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$')
+    def safe(cell):
+        text = str(cell)
+        candidate = text.lstrip(' \t\r\n')
+        if candidate.startswith(('=', '+', '-', '@')) and not number.fullmatch(candidate):
+            return "'" + text
+        return text
+    headers = [*BASE_COLUMNS, *manual.effects]
+    buffer = io.StringIO(newline='')
+    writer = csv.writer(buffer, lineterminator='\r\n')
+    writer.writerow([safe(name) for name in headers])
+    writer.writerows([[safe(row.get(name, '')) for name in headers] for row in rows])
+    return buffer.getvalue().encode('utf-8-sig')
+
+
+def rows_to_provenance_csv(coding_sheet: CodingSheet, results_by_pdf: dict[str, ExtractionResult]) -> str:
+    """Metadata belongs to each selected result, including mixed-model runs."""
+    buffer = io.StringIO()
+    columns = ['row_id', 'source_pdf', 'provider', 'model', 'prompt_version']
+    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator='\n')
+    writer.writeheader()
+    for row in coding_sheet.rows:
+        result = results_by_pdf.get(row.source_pdf)
+        writer.writerow({'row_id': row.row_id, 'source_pdf': row.source_pdf,
+                         'provider': result.provider or '' if result else '',
+                         'model': result.model or '' if result else '',
+                         'prompt_version': result.prompt_version or '' if result else ''})
+    return buffer.getvalue()

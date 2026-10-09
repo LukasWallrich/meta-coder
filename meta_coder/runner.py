@@ -91,6 +91,9 @@ def _result_from_raw_json(path: Path) -> ExtractionResult | None:
     return ExtractionResult(
         source_pdf=data["source_pdf"],
         audit_operation_id=data.get("audit_operation_id"),
+        provider=data.get("provider"),
+        model=data.get("model"),
+        prompt_version=data.get("prompt_version"),
         status=data.get("status") or "error",
         coded_by_row_id=data.get("coded_by_row_id") or {},
         missing_ids=set(data.get("missing_ids") or []),
