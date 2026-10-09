@@ -163,3 +163,7 @@ def test_archive_excludes_temporary_output(tmp_path):
     project = create_project('Archive', root=tmp_path)
     (project.output_dir / 'partial.tmp').write_text('unfinished')
     assert not any(name.endswith('.tmp') for _, name in project_archive_files(project))
+def test_archive_excludes_incomplete_pdf_upload(tmp_path):
+    project = create_project('Partial upload', root=tmp_path)
+    (project.sources_dir / 'paper.pdf.uploading').write_bytes(b'%PDF unfinished')
+    assert 'sources/paper.pdf.uploading' not in {name for _, name in project_archive_files(project)}
