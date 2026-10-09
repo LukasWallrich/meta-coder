@@ -531,3 +531,23 @@ def test_runner_refusal_is_a_409_not_a_server_error(site, monkeypatch):
     monkeypatch.setattr(runtime.runner, 'start', Mock(side_effect=RuntimeError('This project is already running.')))
     response = client.post(url(project, '/run'))
     assert response.status_code == 409 and response.json()['detail'] == 'This project is already running.'
+
+
+def test_retry_all_uses_durable_failures_after_restart_and_subset_retry(site, monkeypatch):
+    from meta_coder.runner import PdfProgress, RunState, write_raw_result
+    from meta_coder.extraction import ExtractionResult
+    client, project, runtime = site
+    ready_project(project, runtime)
+    for name in ['older.pdf', 'removed.pdf']:
+        (project.sources_dir / name).write_bytes(b'%PDF')
+    project.coding_sheet_path.write_text(project.coding_sheet_path.read_text() + 'r2,older.pdf,,Smith,2020\n')
+    for name in ['paper.pdf', 'older.pdf', 'removed.pdf']:
+        write_raw_result(project, ExtractionResult(name, 'error'), provider='gemini', model='model')
+    start = Mock()
+    monkeypatch.setattr(runtime.runner, 'start', start)
+    assert web._project_view(runtime, project)['can_retry'] is True
+    assert client.post(url(project, '/run/retry')).status_code == 303
+    assert set(start.call_args.kwargs['only_pdfs']) == {'paper.pdf', 'older.pdf'}
+    runtime.runner._states[project.project_id] = RunState(status='complete', pdfs=[PdfProgress('paper.pdf', status='ok')])
+    assert client.post(url(project, '/run/retry')).status_code == 303
+    assert start.call_args.kwargs['only_pdfs'] == ['older.pdf']

@@ -492,8 +492,7 @@ def _project_view(
     run_rows_page, run_page, run_total_pages = _paginate(run_rows_sorted, run_page)
     failed_result_count = sum(row["status"] == "error" for row in run_rows_all)
     can_retry = bool(
-        run_state
-        and not is_running
+        not is_running
         and api_key_set
         and run_settings.model.strip()
         and manual is not None
@@ -560,6 +559,7 @@ def _project_view(
         "manual_generator_setup_error": runtime.provider_setup_error(generator_provider, app_settings.manual_generator_model),
         "manual_generator_saved_key_available": runtime.has_saved_key(generator_provider),
         "run_rows": run_rows_page,
+        "run_rows_all": run_rows_all,
         "run_row_count": len(run_rows_all),
         "run_sort": run_sort,
         "run_dir": run_dir,
@@ -1142,15 +1142,10 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if source_pdf:
             targets = source_pdf
         else:
-            # A bare "retry all failed" click means every failed/needs_review/
-            # cancelled PDF from the last run, not just whichever page of the
-            # (paginated) run table happens to be showing.
-            prior_state = runtime.runner.state(project.project_id)
-            targets = (
-                [pdf.source_pdf for pdf in prior_state.pdfs if pdf.status in RETRYABLE_STATUSES]
-                if prior_state
-                else []
-            )
+            eligible = {row.source_pdf for row in view["coding_sheet"].rows}
+            targets = [row["source_pdf"] for row in view["run_rows_all"]
+                       if row["retryable"] and row["source_pdf"] in eligible]
+
         if not targets:
             raise HTTPException(status_code=400, detail="Nothing to retry.")
         return view, targets
