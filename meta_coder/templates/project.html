@@ -672,7 +672,7 @@
                         <select name="filename" class="select" aria-label="Match for {{ suggestion.paper.source_pdf or suggestion.paper.title }}">
                           <option value="">{% if suggestion.filename %}Leave unmatched{% else %}No match yet{% endif %}</option>
                           {% for candidate in suggestion.candidates %}
-                          <option value="{{ candidate }}" {% if candidate == suggestion.filename %}selected{% endif %}>{{ candidate }}</option>
+                          <option value="{{ candidate }}" {% if candidate == suggestion.filename and suggestion.confidence == "high" %}selected{% endif %}>{{ candidate }}</option>
                           {% endfor %}
                         </select>
                         {% else %}

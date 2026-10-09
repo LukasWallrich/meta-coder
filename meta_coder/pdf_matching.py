@@ -31,8 +31,8 @@ from .coding_sheet import coding_sheet_reader
 from .projects import Project
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-_YEAR_RE = re.compile(r"(19|20)\d{2}")
+_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_YEAR_RE = re.compile(r"(?<!\d)(19|20)\d{2}(?!\d)")
 _LETTER_DIGIT_BOUNDARY_RE = re.compile(r"(?<=[a-zA-Z])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z])")
 
 # Words too generic to count as evidence of a match on their own (every filename
@@ -85,7 +85,7 @@ class PdfSignal:
 
 _SIGNAL_CACHE_NAME = "pdf_signals.json"
 _SCORE_CACHE_NAME = "pdf_match_scores.json"
-_SCORE_CACHE_VERSION = 1
+_SCORE_CACHE_VERSION = 2
 
 
 def _signal_cache_path(project: Project) -> Path:
@@ -168,7 +168,7 @@ def _score_cache_key(paper: UnmatchedPaper, signal: PdfSignal) -> str:
 
 
 def _cache_source(grobid_url: str) -> str:
-    return "grobid" if grobid_url else "local"
+    return "identity-v2:grobid" if grobid_url else "identity-v2:local"
 
 
 def _cache_entry(path: Path, signal: PdfSignal, grobid_url: str) -> dict[str, Any]:
@@ -232,7 +232,7 @@ def _significant_tokens(text: str) -> set[str]:
     return {
         token
         for token in _normalize(text).split()
-        if token not in _STOPWORDS and (len(token) >= 3 or token.isdigit())
+        if token not in _STOPWORDS and (len(token) >= 2 or token.isdigit() or ord(token[0]) > 127)
     }
 
 
@@ -416,7 +416,7 @@ def score_pair(paper: UnmatchedPaper, signal: PdfSignal) -> float:
     paper_tokens = _significant_tokens(
         f"{paper.authors} {paper.year} {paper.source_pdf} {paper.title} {paper.doi}"
     )
-    if not paper_tokens:
+    if not any(not token.isdigit() for token in paper_tokens):
         return 0.0
 
     signal_tokens = set(signal.tokens.split())
@@ -435,7 +435,10 @@ def score_pair(paper: UnmatchedPaper, signal: PdfSignal) -> float:
         fuzzy_credit = sum(best_ratios) / len(paper_tokens) * 0.5
 
     year_bonus = 0.15 if paper.year and signal.year and paper.year == signal.year else 0.0
-    return min(1.0, containment + fuzzy_credit + year_bonus)
+    score = min(1.0, containment + fuzzy_credit + year_bonus)
+    if paper.year and signal.year and paper.year != signal.year:
+        score = min(score, 0.4)
+    return score
 
 
 def _confidence_band(score: float) -> str:
@@ -537,6 +540,10 @@ def _suggestions_from_scores(
         filename = assigned_filename.get(paper.key)
         score = assigned_score.get(paper.key, 0.0)
         confidence = _confidence_band(score) if filename else "none"
+        competitors = [other_score for (key, name), other_score in scores.items()
+                       if key == paper.key and name != filename]
+        if filename and competitors and score - max(competitors) < 0.1 and confidence in {"high", "medium"}:
+            confidence = "low"
         if confidence == "none":
             filename = None
         suggestions.append(
