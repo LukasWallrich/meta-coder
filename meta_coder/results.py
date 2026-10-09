@@ -112,7 +112,6 @@ def render_pdf_audit_yaml(
     return yaml.dump(data, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100)
 
 
-
 # OWASP CSV-injection guidance: spreadsheet apps evaluate cells starting with
 # these characters as formulas. Tab and carriage return are always prefixed;
 # the others also after leading whitespace, which some apps ignore.
