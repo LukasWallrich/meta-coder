@@ -720,3 +720,28 @@ test('sheet conversion preserves edits made while the request is pending', async
   assert.equal(w.projectEdits.dirty(), true);
   assert.equal(d.getElementById('sheet-draft-form').getAttribute('aria-busy'), 'false');
 });
+for (const kind of ['run', 'pdf-scan']) {
+  test(`${kind} polling reports HTTP and malformed status failures without terminal refresh`, async t => {
+    let timers;
+    let response = { ok: false, json: async () => ({ detail: 'not found' }) };
+    const { w, d } = setup(t, 'project', w => {
+      timers = fakeTimers(w);
+      w.document.body.insertAdjacentHTML('beforeend', `<div id="${kind}-progress" data-running="true" data-status-url="/status"><p data-progress-summary></p></div>`);
+      w.fetch = async () => response;
+    });
+    w.projectEdits.register({}, () => true);
+    timers.run();
+    await flush();
+    const summary = d.getElementById(kind + '-progress').querySelector('[data-progress-summary]');
+    assert.match(summary.textContent, /Connection lost/);
+    assert.equal(d.getElementById('background-update').classList.contains('hidden'), true);
+    response = { ok: true, json: async () => ({ detail: 'invalid' }) };
+    assert.equal(timers.run(), 3000);
+    await flush();
+    assert.match(summary.textContent, /Connection lost/);
+    response = { ok: true, json: async () => ({ status: 'running', processed: 1, total: 2 }) };
+    timers.run();
+    await flush();
+    assert.match(summary.textContent, /1.*2/);
+  });
+}
