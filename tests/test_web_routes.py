@@ -607,3 +607,16 @@ def test_direct_sheet_upload_refuses_active_run(site, monkeypatch):
     raw = b'row_id,source_pdf,locator,authors,year\nr1,p.pdf,,Smith,2020\n'
     assert client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', raw)}).status_code == 409
     assert project.coding_sheet_path.read_bytes() == previous
+@pytest.mark.parametrize(('method', 'suffix', 'data'), [
+    ('get', '/status', None), ('get', '/pdf-scan/status', None),
+    ('get', '/download/zip', None), ('get', '/download/coded', None),
+    ('get', '/download/evidence', None), ('get', '/raw/missing.json', None),
+    ('post', '/clear-output', None), ('post', '/manual/reset', None),
+    ('post', '/run/cancel', None), ('post', '/open-folder', None),
+])
+def test_missing_projects_return_404_across_routes(site, method, suffix, data):
+    client, project, _ = site
+    from meta_coder.projects import delete_project
+    delete_project(project)
+    response = client.request(method, url(project, suffix), data=data)
+    assert response.status_code == 404
