@@ -21,6 +21,7 @@ from typing import Any
 from .coding_sheet import CodingSheet
 from .extraction import ExtractionResult, redact_secret
 from .manual import CodingManual
+from .fingerprints import input_fingerprint, current_results
 from .projects import Project
 from .prompts import PROMPT_VERSION
 from .provenance import AuditOperation, atomic_write, audited_call, json_bytes
@@ -54,13 +55,27 @@ def raw_json_path_for_read(project: Project, source_pdf: str) -> Path:
     return project.raw_dir / f"{_safe_stem(source_pdf)}.json"
 
 
+def attempt_json_path(project: Project, source_pdf: str) -> Path:
+    path = raw_json_path(project, source_pdf)
+    return path.with_name(path.stem + ".attempt.json")
+
+
+def load_latest_attempts(project: Project) -> dict[str, ExtractionResult]:
+    results = {}
+    for path in project.raw_dir.glob("*.attempt.json"):
+        result = _result_from_raw_json(path)
+        if result is not None:
+            results[result.source_pdf] = result
+    return results
+
+
 def write_raw_result(project: Project, result: ExtractionResult, *, provider: str, model: str) -> None:
     """Persist every completed attempt, including provider failures, for retries and review."""
 
-    atomic_write(raw_json_path(project, result.source_pdf),
-        json.dumps(
+    data = json.dumps(
             {
                 "source_pdf": result.source_pdf,
+                "input_fingerprint": result.input_fingerprint,
                 "audit_operation_id": result.audit_operation_id,
                 "provider": provider,
                 "model": model,
@@ -77,8 +92,13 @@ def write_raw_result(project: Project, result: ExtractionResult, *, provider: st
                 "output_tokens": result.output_tokens,
             },
             indent=2,
-        ).encode("utf-8"),
-    )
+        ).encode("utf-8")
+    atomic_write(attempt_json_path(project, result.source_pdf), data)
+    previous = _result_from_raw_json(raw_json_path(project, result.source_pdf))
+    if (previous and previous.status == "ok" and result.status != "ok"
+            and result.input_fingerprint and previous.input_fingerprint == result.input_fingerprint):
+        return
+    atomic_write(raw_json_path(project, result.source_pdf), data)
 
 
 def _result_from_raw_json(path: Path) -> ExtractionResult | None:
@@ -90,6 +110,7 @@ def _result_from_raw_json(path: Path) -> ExtractionResult | None:
         return None
     return ExtractionResult(
         source_pdf=data["source_pdf"],
+        input_fingerprint=data.get("input_fingerprint"),
         audit_operation_id=data.get("audit_operation_id"),
         status=data.get("status") or "error",
         coded_by_row_id=data.get("coded_by_row_id") or {},
@@ -210,6 +231,13 @@ class Runner:
         state = self._states.get(project_id)
         return bool(state and state.status in ("running", "cancelling"))
 
+    def discard_completed_state(self, project_id: str) -> None:
+        with self._lock:
+            if self.is_running(project_id):
+                raise RuntimeError("Cannot discard an active run.")
+            self._states.pop(project_id, None)
+
+
     def cancel(self, project_id: str) -> None:
         """Cooperative cancellation: flips a flag `process_one` checks before
         starting each PDF. A PDF already mid-request runs to completion rather
@@ -253,7 +281,9 @@ class Runner:
             wanted = set(only_pdfs)
             pdf_names = [name for name in all_pdf_names if name in wanted]
         else:
-            prior_results = load_persisted_results(project)
+            prior_results = current_results(project, manual, coding_sheet, load_persisted_results(project),
+                provider=provider, model=model, reasoning_effort=reasoning_effort,
+                base_url=base_url, response_format=response_format)
             # A normal run is resumable: a successfully coded PDF is durable
             # in output/raw and is never sent to the provider again. Explicit
             # retries intentionally bypass this filter.
@@ -328,7 +358,9 @@ class Runner:
         # — a retry of a few PDFs, or a run cancelled midway — upserts over the
         # existing record instead of collating as if every other PDF was never
         # processed.
-        results_by_pdf: dict[str, ExtractionResult] = load_persisted_results(project)
+        results_by_pdf: dict[str, ExtractionResult] = current_results(project, manual, coding_sheet, load_persisted_results(project),
+            provider=provider, model=model, reasoning_effort=reasoning_effort,
+            base_url=base_url, response_format=response_format)
         results_lock = threading.Lock()
         pacer = _RequestPacer(request_delay_sec)
         provider_kwargs: dict[str, object] = {}
@@ -349,6 +381,8 @@ class Runner:
             progress.status = "running"
             pdf_path = project.sources_dir / progress.source_pdf
             rows = coding_sheet.rows_for_pdf(progress.source_pdf)
+            fingerprint = input_fingerprint(project, manual, rows, provider=provider, model=model,
+                reasoning_effort=reasoning_effort, base_url=base_url, response_format=response_format)
             result = None
             storage_error = None
             try:
@@ -373,6 +407,7 @@ class Runner:
                     **provider_kwargs,
                     cancel_event=state.cancel_event,
                 )
+                result.input_fingerprint = fingerprint
                 write_raw_result(project, result, provider=provider, model=model)
                 atomic_write(audit_yaml_path(project, progress.source_pdf),
                     render_pdf_audit_yaml(
@@ -384,7 +419,7 @@ class Runner:
                 # other already-completed PDF's results — see collate below.
                 if result is None:
                     result = ExtractionResult(
-                        source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {redact_secret(str(exc), api_key)}"
+                        source_pdf=progress.source_pdf, status="error", input_fingerprint=fingerprint, error=f"Unexpected error: {redact_secret(str(exc), api_key)}"
                     )
                     try:
                         write_raw_result(project, result, provider=provider, model=model)
@@ -397,7 +432,10 @@ class Runner:
 
 
             with results_lock:
-                results_by_pdf[progress.source_pdf] = result
+                previous = results_by_pdf.get(progress.source_pdf)
+                if not (previous and previous.status == "ok" and result.status != "ok"
+                        and result.input_fingerprint and previous.input_fingerprint == result.input_fingerprint):
+                    results_by_pdf[progress.source_pdf] = result
                 progress.status = "error" if storage_error else result.status
                 progress.error = storage_error or result.error
                 progress.missing_ids = sorted(result.missing_ids)

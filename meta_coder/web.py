@@ -66,7 +66,8 @@ from .projects import (
     write_manual,
 )
 from .providers import PROVIDER_LABELS, PROVIDERS, check_model, default_model, draft_coding_manual, draft_coding_sheet
-from .runner import Runner, load_persisted_results, raw_json_path_for_read
+from .fingerprints import current_results
+from .runner import Runner, attempt_json_path, load_latest_attempts, load_persisted_results, raw_json_path_for_read
 from .settings import REASONING_EFFORTS, RunSettings, load_run_settings, save_run_settings
 from .uploads import ProjectError as UploadProjectError  # re-export alias, same type
 from .uploads import list_uploaded_pdfs, save_pdf_upload
@@ -114,7 +115,7 @@ RUN_SORT_COLUMNS = {"source_pdf", "authors", "year", "status", "input_tokens", "
 GROBID_SETTINGS_ENABLED = False
 
 
-RETRYABLE_STATUSES = {"error", "needs_review", "cancelled"}
+RETRYABLE_STATUSES = {"error", "needs_review", "cancelled", "stale"}
 RUN_ACTIVE_DETAIL = "Cancel or wait for the active run first."
 
 
@@ -132,7 +133,9 @@ def _run_table_rows(results, coding_sheet, project: Project) -> list[dict]:
     rows = []
     for pdf in results:
         sheet_row = first_row_by_pdf.get(pdf.source_pdf)
-        raw_path = raw_json_path_for_read(project, pdf.source_pdf)
+        raw_path = attempt_json_path(project, pdf.source_pdf)
+        if not raw_path.is_file():
+            raw_path = raw_json_path_for_read(project, pdf.source_pdf)
         rows.append(
             {
                 "source_pdf": pdf.source_pdf,
@@ -450,7 +453,9 @@ def _project_view(
     }
     keyring_available = credentials.keyring_available()
 
-    persisted_results = load_persisted_results(project)
+    persisted_results = current_results(project, manual, coding_sheet, load_persisted_results(project),
+        provider=run_settings.provider, model=run_settings.model, reasoning_effort=run_settings.reasoning_effort,
+        **endpoint_options(run_settings.provider))
     completed_pdf_names = {
         source_pdf for source_pdf, result in persisted_results.items() if result.status == "ok"
     }
@@ -486,7 +491,10 @@ def _project_view(
     run_sort = run_sort if run_sort in RUN_SORT_COLUMNS else "source_pdf"
     run_dir = run_dir if run_dir in ("asc", "desc") else "asc"
     table_results = dict(persisted_results)
-    if run_state:
+    table_results.update(current_results(project, manual, coding_sheet, load_latest_attempts(project),
+        provider=run_settings.provider, model=run_settings.model, reasoning_effort=run_settings.reasoning_effort,
+        **endpoint_options(run_settings.provider)))
+    if run_state and is_running:
         # A retry's in-memory state includes only its target PDFs. Overlay it
         # on the persisted history rather than hiding earlier outcomes.
         table_results.update({progress.source_pdf: progress for progress in run_state.pdfs})
@@ -668,6 +676,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         project = runtime.project(project_id)
         _reject_if_busy(project_id)
         clear_output(project)
+        runtime.runner.discard_completed_state(project_id)
         return RedirectResponse(f"/{token}/projects/{project_id}?tab=manage", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/open-folder")
@@ -913,6 +922,8 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             return TEMPLATES.TemplateResponse(request, "project.html", context, status_code=400)
         _reject_if_busy(project_id)
         write_manual(project, manual)
+        if not any(project.raw_dir.glob("*.json")):
+            runtime.runner.discard_completed_state(project_id)
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/manual/reset")
@@ -920,6 +931,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         project = runtime.project(project_id)
         _reject_if_busy(project_id)
         reset_manual_to_default(project)
+        runtime.runner.discard_completed_state(project_id)
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/manual/import")
@@ -946,6 +958,8 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 f"/{token}/projects/{project_id}?error={quote(str(exc))}", status_code=303
             )
         write_manual(project, manual)
+        if not any(project.raw_dir.glob("*.json")):
+            runtime.runner.discard_completed_state(project_id)
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
     @app.post(f"/{token}/projects/{{project_id}}/manual/draft", response_class=JSONResponse)
@@ -1011,6 +1025,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if text != previous:
             atomic_write(project.coding_sheet_path, text.encode("utf-8"))
             clear_output(project)
+            runtime.runner.discard_completed_state(project_id)
 
         return RedirectResponse(f"/{token}/projects/{project_id}", status_code=303)
 
@@ -1057,6 +1072,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if csv_text != previous:
             project.coding_sheet_path.write_text(csv_text, encoding="utf-8")
             clear_output(project)
+            runtime.runner.discard_completed_state(project_id)
         return JSONResponse({"redirect": f"/{token}/projects/{project_id}?tab=coding-sheet"})
 
     @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/match-pdfs")
@@ -1275,13 +1291,26 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             {"token": token, "project": project, "raw_yaml": _highlight_yaml(yaml_text)},
         )
 
+    def _current_csv(project, kind):
+        from .results import collate_results, rows_to_csv
+        view = _project_view(runtime, project)
+        if view["manual"] is None:
+            raise HTTPException(status_code=409, detail="Fix the manual before exporting current results.")
+        settings = view["run_settings"]
+        results = current_results(project, view["manual"], view["coding_sheet"], load_persisted_results(project),
+            provider=settings.provider, model=settings.model, reasoning_effort=settings.reasoning_effort,
+            **endpoint_options(settings.provider))
+        coded, evidence = collate_results(manual=view["manual"], coding_sheet=view["coding_sheet"], results_by_pdf=results)
+        return PlainTextResponse(rows_to_csv(coded if kind == "coded" else evidence, view["manual"]),
+            media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={kind}_data.csv"})
+
     @app.get(f"/{token}/projects/{{project_id}}/download/coded")
     async def download_coded(project_id: str):
         project = runtime.project(project_id)
         path = project.output_dir / "coded_data.csv"
         if not path.is_file():
             raise HTTPException(status_code=404, detail="No results yet.")
-        return FileResponse(path, media_type="text/csv", filename=f"{project.name}-coded_data.csv")
+        return _current_csv(project, "coded")
 
     @app.get(f"/{token}/projects/{{project_id}}/download/evidence")
     async def download_evidence(project_id: str):
@@ -1289,7 +1318,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         path = project.output_dir / "evidence.csv"
         if not path.is_file():
             raise HTTPException(status_code=404, detail="No results yet.")
-        return FileResponse(path, media_type="text/csv", filename=f"{project.name}-evidence.csv")
+        return _current_csv(project, "evidence")
 
     @app.get(f"/{token}/projects/{{project_id}}/audit/{{filename}}")
     async def view_audit(project_id: str, filename: str):
