@@ -175,7 +175,7 @@ def test_upload_routes_and_scanner_dispatch(site):
     note.write_text('keep')
     assert client.post(url(project, '/uploads/delete'), data={'filename': 'notes.txt'}).status_code == 303
     assert note.exists()
-    response = client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', b'row_id,source_pdf,locator\nr1,other.pdf,exp1\n')})
+    response = client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', b'row_id,source_pdf,locator,authors,year\nr1,other.pdf,exp1,Smith,2024\n')})
     assert response.status_code == 303 and 'r1,other.pdf' in project.coding_sheet_path.read_text()
 
 
@@ -570,3 +570,40 @@ def test_retry_all_uses_durable_failures_after_restart_and_subset_retry(site, mo
     runtime.runner._states[project.project_id] = RunState(status='complete', pdfs=[PdfProgress('paper.pdf', status='ok')])
     assert client.post(url(project, '/run/retry')).status_code == 303
     assert start.call_args.kwargs['only_pdfs'] == ['older.pdf']
+@pytest.mark.parametrize('raw,status', [
+    (b'row_id,source_pdf,locator,authors,year\nr1,p.pdf,,Smith,2020,extra\n', 400),
+    (b'row_id,source_pdf,locator,authors,year\nr1,p.pdf,,M\xfcller,2020\n', 400),
+    (b'x' * 25, 413),
+])
+def test_direct_sheet_rejection_preserves_inputs_and_results(site, monkeypatch, raw, status):
+    client, project, _ = site
+    if status == 413:
+        monkeypatch.setattr(web, 'load_app_settings', lambda: Mock(upload_size_cap_bytes=24))
+    previous = project.coding_sheet_path.read_bytes()
+    output = project.raw_dir / 'result.json'
+    output.write_text('valuable')
+    response = client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', raw)})
+    assert response.status_code == status
+    assert project.coding_sheet_path.read_bytes() == previous
+    assert output.read_text() == 'valuable'
+
+
+def test_direct_sheet_bom_and_unchanged_save(site):
+    client, project, _ = site
+    text = 'row_id,source_pdf,locator,authors,year\nr1,missing.pdf,,Müller,2020\n'
+    response = client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', ('\ufeff' + text).encode())})
+    assert response.status_code == 303
+    assert project.coding_sheet_path.read_text() == text
+    output = project.raw_dir / 'result.json'
+    output.write_text('valuable')
+    assert client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', text.encode())}).status_code == 303
+    assert output.read_text() == 'valuable'
+
+
+def test_direct_sheet_upload_refuses_active_run(site, monkeypatch):
+    client, project, runtime = site
+    monkeypatch.setattr(runtime.runner, 'is_running', lambda _: True)
+    previous = project.coding_sheet_path.read_bytes()
+    raw = b'row_id,source_pdf,locator,authors,year\nr1,p.pdf,,Smith,2020\n'
+    assert client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', raw)}).status_code == 409
+    assert project.coding_sheet_path.read_bytes() == previous
