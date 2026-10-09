@@ -416,10 +416,10 @@ class Runner:
                 manual=manual, coding_sheet=coding_sheet, results_by_pdf=results_by_pdf
             )
             (project.output_dir / "coded_data.csv").write_text(
-                rows_to_csv(coded_rows, manual), encoding="utf-8"
+                rows_to_csv(coded_rows, manual), encoding="utf-8", newline=""
             )
             (project.output_dir / "evidence.csv").write_text(
-                rows_to_csv(evidence_rows, manual), encoding="utf-8"
+                rows_to_csv(evidence_rows, manual), encoding="utf-8", newline=""
             )
             if state.audit_run:
                 for name in ("coded_data.csv", "evidence.csv"):
