@@ -28,6 +28,10 @@ The matching cell in `evidence.csv` explains the reason. Recode these three text
 
 Results coded before these three reasons existed show `Not Reported` for every missing value.
 
+## Fields with several categories
+
+For a field that [allows several categories](manual.md#fields-where-several-categories-apply), the cell in `coded_data.csv` lists every selected category, separated by `; ` and in the order the manual defines them, for example `survey; interview`. Split the cell on `; ` to analyse the categories separately. If no category applies, the cell holds one of the [missing-value texts](#missing-values).
+
 ## Download the data
 
 | Export | Purpose |
