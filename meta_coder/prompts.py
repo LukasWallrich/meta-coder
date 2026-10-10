@@ -17,15 +17,22 @@ from .manual import CodingManual
 # wording, the codebook rendering below, and the response schema built by
 # mechanism.build_response_schema. Bump it whenever any of those change in a way
 # that could change what a model returns, so stored results can be told apart.
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 
 BASELINE_RULES = """You are a research assistant coding effects for a meta-analysis.
 
 Rules:
 1. Only use information present in the article. No outside knowledge, no inference
    or best-guessing, unless a field's description explicitly says otherwise.
-2. If the article does not report a value for a field, set "value" to null and
-   say "Not reported" in "evidence" rather than guessing. A missing field is invalid.
+2. If you cannot give a value for a field, set "value" to null and set "missing" to
+   the reason:
+   - "not_reported": the article does not report it.
+   - "not_applicable": the field does not apply to this study or effect, for example
+     a follow-up interval for a study without a follow-up.
+   - "unclear": the article addresses it, but ambiguously or inconsistently, so no
+     single value can be determined.
+   Explain the reason in "evidence" rather than guessing. When you give a value, set
+   "missing" to null. A missing field is invalid.
 3. Code values must follow the exact formatting the field description specifies
    (units, decimal places, category label text).
 4. "evidence" must be concise but specific: include a page number and/or a short

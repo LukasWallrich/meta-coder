@@ -25,7 +25,7 @@ from .projects import Project
 from .prompts import PROMPT_VERSION
 from .provenance import AuditOperation, audited_call, json_bytes
 from .providers import DEFAULT_PROVIDER, default_model, extract_pdf_effects
-from .results import collate_results, render_pdf_audit_yaml, rows_to_csv
+from .results import cells_to_check, collate_results, render_pdf_audit_yaml, rows_to_csv
 
 
 _SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -159,6 +159,7 @@ class PdfProgress:
     input_tokens: int | None = None
     output_tokens: int | None = None
     json_repaired: bool = False
+    cells_to_check: int = 0
 
 
 @dataclass
@@ -190,6 +191,7 @@ class RunState:
                     "input_tokens": p.input_tokens,
                     "output_tokens": p.output_tokens,
                     "json_repaired": p.json_repaired,
+                    "cells_to_check": p.cells_to_check,
                 }
                 for p in self.pdfs
             ],
@@ -401,6 +403,7 @@ class Runner:
                 progress.input_tokens = result.input_tokens
                 progress.output_tokens = result.output_tokens
                 progress.json_repaired = result.repaired_response is not None
+                progress.cells_to_check = cells_to_check(result.coded_by_row_id)
                 state.processed += 1
 
         try:
