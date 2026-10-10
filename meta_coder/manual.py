@@ -28,6 +28,10 @@ SUPPORTED_TYPES = {"string", "number", "integer", "boolean"}
 BASE_COLUMNS = ("row_id", "source_pdf", "locator", "authors", "year", "status")
 _RESERVED_NAME_SUGGESTIONS = {"year": "publication_year", "status": "publication_status"}
 
+# Joins the selected levels of a `multiple` field into one coded_data.csv cell
+# (see results.py), so a level of such a field cannot contain the separator.
+MULTIPLE_SEPARATOR = "; "
+
 # Every manual gets this effect field forced onto it — see `_build_manual_from_raw`,
 # which injects it after parsing and discards whatever the caller supplied for it.
 # Not sourced from the PDF text itself, so `evidence_required` is False: there's
@@ -57,6 +61,8 @@ class FieldSpec:
     description: str | None = None
     levels: list[Level] = field(default_factory=list)
     evidence_required: bool = True
+    # Categorical fields only: the model may select several levels, not one.
+    multiple: bool = False
 
     @property
     def is_categorical(self) -> bool:
@@ -154,12 +160,29 @@ def _parse_field(name: str, raw: object, section: str) -> FieldSpec:
     levels = _parse_levels(raw.get("levels"), name) if section == "effects" else []
     if levels and field_type != "string":
         raise ManualError(f"effects.{name} has `levels` but type is not `string`.")
+    multiple = raw.get("multiple", False)
+    if not isinstance(multiple, bool):
+        raise ManualError(f"{section}.{name}.multiple must be true or false.")
+    if multiple and not levels:
+        raise ManualError(
+            f"{section}.{name} has `multiple: true` but no `levels`; only a categorical "
+            "field can allow several levels."
+        )
+    if multiple:
+        for level in levels:
+            if MULTIPLE_SEPARATOR.strip() in level.value:
+                raise ManualError(
+                    f"{section}.{name}.levels has the value `{level.value}`, but a level of a "
+                    "`multiple` field cannot contain a semicolon: selected levels are "
+                    "separated by semicolons in the export."
+                )
     description = raw.get("description")
     return FieldSpec(
         type=field_type,
         description=str(description).strip() if description else None,
         levels=levels,
         evidence_required=evidence_required,
+        multiple=multiple,
     )
 
 
@@ -349,6 +372,7 @@ def _field_to_payload(name: str, spec: FieldSpec) -> dict[str, Any]:
         "type": spec.type,
         "description": spec.description or "",
         "evidence_required": spec.evidence_required,
+        "multiple": spec.multiple,
         "levels": [{"value": level.value, "description": level.description or ""} for level in spec.levels],
     }
 
@@ -375,6 +399,8 @@ def manual_to_yaml_text(manual: CodingManual) -> str:
             out["description"] = spec.description
         if not spec.evidence_required:
             out["evidence_required"] = False
+        if spec.multiple:
+            out["multiple"] = True
         if spec.levels:
             out["levels"] = [
                 ({"value": level.value, "description": level.description} if level.description else {"value": level.value})

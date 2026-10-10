@@ -60,7 +60,22 @@ def _missing_schema(type_map: dict[str, str]) -> dict[str, Any]:
 
 
 def _value_schema(spec: FieldSpec, type_map: dict[str, str]) -> dict[str, Any]:
-    schema: dict[str, Any] = {"type": type_map[spec.type]}
+    if spec.multiple:
+        # A list of levels. The enum sits on the items, and "nothing applies" is
+        # a null value with a `missing` code, never an empty list.
+        schema: dict[str, Any] = {
+            "type": type_map["array"],
+            "items": {
+                "type": type_map["string"],
+                "enum": [level.value for level in spec.levels],
+            },
+        }
+        if type_map is JSON_SCHEMA_TYPE:
+            schema["type"] = [type_map["array"], "null"]
+        else:
+            schema["nullable"] = True
+        return schema
+    schema = {"type": type_map[spec.type]}
     if type_map is JSON_SCHEMA_TYPE:
         schema["type"] = [type_map[spec.type], "null"]
     else:
@@ -168,6 +183,15 @@ class ValidationResult:
 def _valid_field_value(value: object, spec: FieldSpec) -> bool:
     if value is None:
         return True
+    if spec.multiple:
+        # At least one level, each listed in the manual, none repeated.
+        allowed = {level.value for level in spec.levels}
+        return (
+            isinstance(value, list)
+            and bool(value)
+            and all(isinstance(item, str) and item in allowed for item in value)
+            and len(set(value)) == len(value)
+        )
     if spec.type == "string":
         return isinstance(value, str) and (not spec.levels or value in {level.value for level in spec.levels})
     if spec.type == "number":

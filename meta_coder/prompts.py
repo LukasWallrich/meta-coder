@@ -17,7 +17,7 @@ from .manual import CodingManual
 # wording, the codebook rendering below, and the response schema built by
 # mechanism.build_response_schema. Bump it whenever any of those change in a way
 # that could change what a model returns, so stored results can be told apart.
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"
 
 BASELINE_RULES = """You are a research assistant coding effects for a meta-analysis.
 
@@ -40,6 +40,9 @@ Rules:
 5. For a categorical field, set "value" to exactly one of its listed levels, using
    the level descriptions to decide which applies. If more than one level seems to
    apply, choose the best fit and explain the ambiguity in the row's `notes` field.
+   Only for a field marked "select all that apply", set "value" to a list of every
+   level that applies, in the order the levels are listed. Never return an empty
+   list: if no level applies, set "value" to null as in rule 2.
 6. Every object in "effects" MUST include a "row_id" that exactly matches one of the
    requested row IDs below. Never invent, rename, or omit a row_id. Return exactly
    one object per requested row, no more, no fewer."""
@@ -61,6 +64,8 @@ def render_codebook(manual: CodingManual) -> str:
     lines.append("Fields to code for each row:")
     for name, spec in manual.effects.items():
         kind = "categorical" if spec.is_categorical else spec.type
+        if spec.multiple:
+            kind += ", select all that apply"
         lines.append(f"- `{name}` ({kind})")
         if spec.description:
             lines.append(f"  Description: {_indent(spec.description, '    ')}")

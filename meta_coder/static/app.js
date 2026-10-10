@@ -229,6 +229,7 @@ var projectEdits = (function () {
     block.querySelector('[data-field="name"]').addEventListener("input", syncSummary);
     bindText(block, "description", field);
     bindCheckbox(block, "evidence_required", field, true);
+    bindCheckbox(block, "multiple", field, false);
 
     var typeSelect = block.querySelector('[data-field="type"]');
     typeSelect.value = field.type || "string";
@@ -243,6 +244,9 @@ var projectEdits = (function () {
         levelsSection.classList.add("hidden");
         field.levels = [];
         levelsList.innerHTML = "";
+        // Only a categorical field can allow several levels.
+        field.multiple = false;
+        block.querySelector('[data-field="multiple"]').checked = false;
       }
     }
 
@@ -308,7 +312,7 @@ var projectEdits = (function () {
   var effectsList = document.getElementById("effect-fields-list");
 
   document.getElementById("add-effect-field").addEventListener("click", function () {
-    var field = { name: "", type: "string", evidence_required: true, description: "", levels: [] };
+    var field = { name: "", type: "string", evidence_required: true, multiple: false, description: "", levels: [] };
     state.effects.push(field);
     var addedField = renderEffectField(field, true);
     effectsList.appendChild(addedField);

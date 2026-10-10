@@ -13,7 +13,7 @@ import yaml
 
 from .coding_sheet import CodingSheet, CodingSheetRow
 from .extraction import ExtractionResult
-from .manual import BASE_COLUMNS, CodingManual
+from .manual import BASE_COLUMNS, MULTIPLE_SEPARATOR, CodingManual, FieldSpec
 
 
 def _field_mapping(coded: dict, field_name: str) -> dict:
@@ -35,6 +35,17 @@ MISSING_LABELS = {
 def _missing_label(field_value: dict) -> str:
     code = field_value.get("missing")
     return MISSING_LABELS.get(code if isinstance(code, str) else "", "Not Reported")
+
+
+def _cell_text(value: object, spec: FieldSpec) -> str:
+    """A coded value as CSV text. The levels selected for a `multiple` field
+    share one cell, in the manual's level order whatever order the model used."""
+
+    if not isinstance(value, list):
+        return str(value)
+    order = {level.value: index for index, level in enumerate(spec.levels)}
+    items = sorted((str(item) for item in value), key=lambda item: order.get(item, len(order)))
+    return MULTIPLE_SEPARATOR.join(items)
 
 
 def cells_to_check(coded_by_row_id: object) -> int:
@@ -88,7 +99,11 @@ def collate_results(
         for field_name in effect_columns:
             field_value = _field_mapping(coded, field_name)
             value = field_value.get("value", "")
-            coded_row[field_name] = _missing_label(field_value) if value is None else str(value)
+            coded_row[field_name] = (
+                _missing_label(field_value)
+                if value is None
+                else _cell_text(value, manual.effects[field_name])
+            )
             evidence_row[field_name] = str(field_value.get("evidence", ""))
 
         coded_rows.append(coded_row)
