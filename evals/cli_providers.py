@@ -73,6 +73,9 @@ CLAUDE_SYSTEM_PROMPT = (
     "You code research articles for a meta-analysis. Work only from the "
     "attached PDF and return only the requested structured output."
 )
+# Without this, Claude Code sends the prompt a second time, to a small model
+# that names the session.
+CLAUDE_ENV = {"CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1"}
 CODEX_INSTRUCTIONS = (
     "You code research articles for a meta-analysis. Work only from the "
     "attached page images and the article text in the message, and return "
@@ -235,7 +238,7 @@ def _call_claude(
         "--system-prompt", CLAUDE_SYSTEM_PROMPT, "--model", model,
         "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--json-schema", json.dumps(schema),
-    ], json.dumps(message) + "\n", workspace)
+    ], json.dumps(message) + "\n", workspace, env=CLAUDE_ENV)
     reply = None
     for line in stdout.splitlines():
         try:

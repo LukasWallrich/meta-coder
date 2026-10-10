@@ -119,6 +119,7 @@ def test_claude_cli_sends_the_pdf_as_a_document_block_with_no_tools(monkeypatch,
     assert "--json-schema" in command
     assert seen["files"] == []
     assert "ANTHROPIC_API_KEY" not in seen["env"]
+    assert seen["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
     document, text = json.loads(seen["input"])["message"]["content"]
     assert document["type"] == "document"
     assert base64.b64decode(document["source"]["data"]) == pdf.read_bytes()
