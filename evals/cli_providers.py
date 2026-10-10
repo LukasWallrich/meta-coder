@@ -75,16 +75,28 @@ CODEX_INSTRUCTIONS = (
     "attached page images and the article text in the message, and return "
     "only the requested JSON."
 )
+# Codex has no single switch for "no agent prompt": each part it adds around
+# ours is turned off by its own setting. What no setting removes is the list
+# of the user's own skills and their global AGENTS.md.
 CODEX_OVERRIDES = (
     "approval_policy='never'",
     "mcp_servers={}",
-    "features.shell_tool=false",
-    "features.unified_exec=false",
     "agents.enabled=false",
     "web_search='disabled'",
     "project_doc_max_bytes=0",
     "memories.generate_memories=false",
     "memories.use_memories=false",
+    "skills.bundled.enabled=false",
+    "include_permissions_instructions=false",
+    "include_apps_instructions=false",
+    "include_environment_context=false",
+    "include_collaboration_mode_instructions=false",
+)
+CODEX_DISABLED_FEATURES = (
+    "shell_tool", "unified_exec", "plugins", "apps", "skill_search", "tool_suggest",
+    "remote_plugin", "plugin_sharing", "goals", "multi_agent", "image_generation",
+    "view_image", "sleep_tool", "browser_use", "browser_use_external", "computer_use",
+    "in_app_browser", "collaboration_modes", "hooks", "workspace_dependencies", "worktrees",
 )
 
 
@@ -202,6 +214,8 @@ def _call_codex(
     ]
     for override in (*CODEX_OVERRIDES, "model_instructions_file='instructions.md'"):
         command += ["-c", override]
+    for feature in CODEX_DISABLED_FEATURES:
+        command += ["--disable", feature]
     for page in pages:
         command += ["--image", page.name]
     command += ["--output-schema", "schema.json", "--output-last-message", "reply.json", "--json", "-"]
