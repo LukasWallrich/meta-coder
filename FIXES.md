@@ -1,6 +1,6 @@
 # Remaining bug fixes from the latest Claude thread
 
-The source handoff is Claude session `2f2dbccb-dd0e-4d02-b31b-420413277bb4`, ending with six upstream PRs and a next-wave queue. This integration branch combines the six existing PRs and the verified fixes below, with merge conflicts resolved. It has no PR of its own.
+The source handoff is Claude session `2f2dbccb-dd0e-4d02-b31b-420413277bb4`, ending with six upstream PRs and a next-wave queue. This integration branch combines the six existing PRs and the verified fixes below (follow-up PRs #20–#23 are listed separately and not merged here), with merge conflicts resolved. It has no PR of its own.
 
 ## Verified fixes
 
@@ -29,18 +29,20 @@ Integrated validation:
 
 Upstream GitHub Actions currently report `action_required` for fork contributions. The maintainer must approve those workflow runs; these results are local Linux verification, not completed Windows/macOS CI. Claude's original #4 still has only static PowerShell validation.
 
-## Review branches without PRs
+## Follow-up PRs from the review branches
 
-Each branch contains code, focused regressions and `REVIEW.md` explaining policy decisions and remaining gaps. They are based on this integration's verified fixes, rather than intended as independent upstream PRs.
+The four former `review/*` branches were rebuilt as standalone PRs on upstream `main`, reviewed, fixed and opened. The `review/*` branches are superseded and kept only for history. None of these PRs depends on another open PR.
 
-| Branch | Candidate work | Validation / reason withheld |
-|---|---|---|
-| [review/result-freshness-and-retries](https://github.com/LukasWallrich/meta-coder/tree/review/result-freshness-and-retries) | Input fingerprints across reuse, collation, UI completion and CSV download; preserve a verified success while recording failed retry attempts; discard cleared progress. | 12 new tests plus six concurrency tests pass; full suite 649 passed / 4 failed. Legacy-result and terminal-state policy needs agreement; ZIP/YAML freshness, hashing cost and multi-file durability remain gaps. |
-| [review/conservative-pdf-matching](https://github.com/LukasWallrich/meta-coder/tree/review/conservative-pdf-matching) | Unicode/short surname identity, contradictory-year caps, ambiguity margins, cautious bulk selection and cache version bumps. | Four new tests and all 645 Python tests pass. Thresholds and first-page citation noise need a realistic corpus. |
-| [review/spreadsheet-export-and-provenance](https://github.com/LukasWallrich/meta-coder/tree/review/spreadsheet-export-and-provenance) | Explicit formula-protected BOM CSV variant preserving negative numbers; separately joinable per-result provenance CSV. | Two new tests and all 644 Python tests pass. Needs real spreadsheet validation, UI/docs and freshness integration; metadata layout is a review decision. |
-| [review/gemini-transient-retries](https://github.com/LukasWallrich/meta-coder/tree/review/gemini-transient-retries) | Bounded transient HTTP retries with numeric Retry-After and interruptible backoff. | Five new tests and all 647 Python tests pass. Needs pacing/total-timeout integration, HTTP-date Retry-After and cost policy review. |
+| Upstream PR | Result |
+|---|---|
+| [#20](https://github.com/shaheedazaad/meta-coder/pull/20) | Gemini retries HTTP 429/500/502/503/504 at most three times (2 s, then 4 s), honoring Retry-After in seconds or HTTP-date form up to 30 s; cancellable, audited per attempt, redacted. Open: retry/cost policy, global pacer integration. Overlaps #2 in the Gemini transport. |
+| [#21](https://github.com/shaheedazaad/meta-coder/pull/21) | PDF matching counts short and Unicode surnames but not initials or short title words, ignores year-only evidence, caps contradictory years at 0.4, flags near-ties (0.1) as low, preselects only high confidence, reads "2020a" as 2020. Open: thresholds need a realistic corpus. |
+| [#22](https://github.com/shaheedazaad/meta-coder/pull/22) | Optional OWASP-escaped BOM/CRLF spreadsheet copies of the canonical CSVs and a per-row `provenance.csv` (provider, model, audit operation id), with UI links and docs. Also fixes doubled CSV line endings on Windows. Open: manual Excel/LibreOffice check. May conflict with #17 in download routes. |
+| [#23](https://github.com/shaheedazaad/meta-coder/pull/23) | Results carry an input fingerprint (canonical manual, row IDs and locators, PDF SHA-256, provider/model settings); mismatches show as outdated and are recoded, legacy results stay usable. Failed retries never replace a saved success. Merges mechanically with #5, #9, #11 and #15 (combined suite passes). |
 
-Do not merge the review-only branches as production fixes yet. In particular, the freshness branch intentionally has unresolved inherited test contracts. Configurable OpenAI-compatible temperature and seeds remain enhancements; no forced temperature change was made.
+Each passes the full Python and JavaScript suites on its own branch (local venv; pixi unavailable). Local coverage is 99.7% on each, from the same seven pre-existing lines that #16 covers.
+
+Configurable OpenAI-compatible temperature and seeds remain enhancements; no forced temperature change was made.
 
 ## Merge notes
 
