@@ -37,6 +37,17 @@ def _missing_label(field_value: dict) -> str:
     return MISSING_LABELS.get(code if isinstance(code, str) else "", "Not Reported")
 
 
+def _base_row(row: CodingSheetRow, status: str) -> dict[str, str]:
+    return {
+        "row_id": row.row_id,
+        "source_pdf": row.source_pdf,
+        "locator": row.locator,
+        "authors": row.authors,
+        "year": row.year,
+        "status": status,
+    }
+
+
 def _cell_text(value: object, spec: FieldSpec) -> str:
     """A coded value as CSV text. The levels selected for a `multiple` field
     share one cell, in the manual's level order whatever order the model used."""
@@ -48,14 +59,22 @@ def _cell_text(value: object, spec: FieldSpec) -> str:
     return MULTIPLE_SEPARATOR.join(items)
 
 
+def _needs_check(cell: object) -> bool:
+    if not isinstance(cell, dict):
+        return False
+    return (cell.get("value") is None and cell.get("missing") == "unclear") or (
+        cell.get("confidence") == "low"
+    )
+
+
 def cells_to_check(coded_by_row_id: object) -> int:
-    """How many coded cells a person should look at first: currently those the
-    model marked `unclear`. Never affects a PDF's status."""
+    """How many coded cells a person should look at first: those the model
+    marked `unclear` or gave low confidence. Never affects a PDF's status."""
 
     if not isinstance(coded_by_row_id, dict):
         return 0
     return sum(
-        isinstance(cell, dict) and cell.get("value") is None and cell.get("missing") == "unclear"
+        _needs_check(cell)
         for coded in coded_by_row_id.values()
         if isinstance(coded, dict)
         for cell in coded.values()
@@ -66,6 +85,8 @@ def _audit_field(field_value: dict) -> dict[str, Any]:
     entry: dict[str, Any] = {"value": field_value.get("value")}
     if entry["value"] is None and "missing" in field_value:
         entry["missing"] = field_value["missing"]
+    if "confidence" in field_value:
+        entry["confidence"] = field_value["confidence"]
     entry["evidence"] = field_value.get("evidence")
     return entry
 
@@ -85,14 +106,7 @@ def collate_results(
         status = result.status if result else "not_run"
         coded = (result.coded_by_row_id.get(row.row_id) if result else None) or {}
 
-        base = {
-            "row_id": row.row_id,
-            "source_pdf": row.source_pdf,
-            "locator": row.locator,
-            "authors": row.authors,
-            "year": row.year,
-            "status": status,
-        }
+        base = _base_row(row, status)
 
         coded_row = dict(base)
         evidence_row = dict(base)
@@ -110,6 +124,29 @@ def collate_results(
         evidence_rows.append(evidence_row)
 
     return coded_rows, evidence_rows
+
+
+def collate_field_key(
+    key: str,
+    *,
+    manual: CodingManual,
+    coding_sheet: CodingSheet,
+    results_by_pdf: dict[str, ExtractionResult],
+) -> list[dict[str, str]]:
+    """Rows of a file shaped like coded_data.csv whose cells hold one other key
+    of each coded field, such as its `confidence`. Cells without that key —
+    the `notes` field, rows not coded yet, older results — are blank."""
+
+    rows: list[dict[str, str]] = []
+    for row in coding_sheet.rows:
+        result = results_by_pdf.get(row.source_pdf)
+        coded = (result.coded_by_row_id.get(row.row_id) if result else None) or {}
+        out = _base_row(row, result.status if result else "not_run")
+        for field_name in manual.effects:
+            cell = _field_mapping(coded, field_name).get(key)
+            out[field_name] = "" if cell is None else str(cell)
+        rows.append(out)
+    return rows
 
 
 def rows_to_csv(rows: list[dict[str, str]], manual: CodingManual) -> str:

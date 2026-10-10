@@ -25,7 +25,7 @@ from .projects import Project
 from .prompts import PROMPT_VERSION
 from .provenance import AuditOperation, audited_call, json_bytes
 from .providers import DEFAULT_PROVIDER, default_model, extract_pdf_effects
-from .results import cells_to_check, collate_results, render_pdf_audit_yaml, rows_to_csv
+from .results import cells_to_check, collate_field_key, collate_results, render_pdf_audit_yaml, rows_to_csv
 
 
 _SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -424,8 +424,17 @@ class Runner:
             (project.output_dir / "evidence.csv").write_text(
                 rows_to_csv(evidence_rows, manual), encoding="utf-8"
             )
+            output_names = ["coded_data.csv", "evidence.csv"]
+            if manual.confidence:
+                confidence_rows = collate_field_key(
+                    "confidence", manual=manual, coding_sheet=coding_sheet, results_by_pdf=results_by_pdf
+                )
+                (project.output_dir / "confidence.csv").write_text(
+                    rows_to_csv(confidence_rows, manual), encoding="utf-8"
+                )
+                output_names.append("confidence.csv")
             if state.audit_run:
-                for name in ("coded_data.csv", "evidence.csv"):
+                for name in output_names:
                     state.audit_run.input(name, (project.output_dir / name).read_bytes())
                 state.audit_run.input("final_results.json", json_bytes(results_by_pdf))
             terminal_status = "cancelled" if state.cancel_requested else "complete"

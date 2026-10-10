@@ -327,6 +327,11 @@ var projectEdits = (function () {
     });
   });
 
+  var confidenceInput = document.getElementById("manual-confidence");
+  confidenceInput.addEventListener("change", function () {
+    state.confidence = confidenceInput.checked;
+  });
+
   function replaceManualState(nextState) {
     state = nextState;
     effectsList.innerHTML = "";
@@ -337,6 +342,8 @@ var projectEdits = (function () {
       var input = document.getElementById("manual-" + key.replace(/_/g, "-"));
       if (input) input.value = state[key] || "";
     });
+    state.confidence = !!state.confidence;
+    confidenceInput.checked = state.confidence;
   }
 
   replaceManualState(state);
