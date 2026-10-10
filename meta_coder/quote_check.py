@@ -48,6 +48,10 @@ _MIN_BLOCK_CHARS = 3
 _KEPT_SYMBOLS = frozenset("<>=≤≥")
 _DECIMAL_POINT_RE = re.compile(r"\.(?=\d)")
 _DECIMAL_POINT = "\x00"
+# A hyphen, minus sign or en dash directly before a number is a sign (or a
+# range), unlike the hyphens that line breaks add and remove.
+_MINUS_RE = re.compile(r"[-−–](?=\.?\d)")
+_MINUS = "\x01"
 _ELLIPSIS_RE = re.compile(r"\[?(?:\.\s?){3,}\]?|\[?…\]?")
 
 
@@ -55,18 +59,20 @@ def normalize(text: str) -> str:
     """Reduce text to what a quote and a PDF text layer should agree on.
 
     NFKC folds ligatures (`ﬁ`), full-width forms and non-breaking spaces; case
-    is folded; then only letters, digits, decimal points and comparison signs
-    are kept. Dropping spaces, hyphens and punctuation makes the comparison
+    is folded; then only letters, digits, decimal points, minus signs before
+    a number and comparison signs are kept. Dropping spaces, hyphens and punctuation makes the comparison
     blind to line breaks, end-of-line hyphenation, missing or doubled spaces
     and typographic quotes and dashes, all of which PDF extraction changes.
     """
 
     text = unicodedata.normalize("NFKC", text).casefold()
+    text = _MINUS_RE.sub(_MINUS, text)
     text = _DECIMAL_POINT_RE.sub(_DECIMAL_POINT, text)
+    kept = {_DECIMAL_POINT: ".", _MINUS: "-"}
     return "".join(
-        "." if char == _DECIMAL_POINT else char
+        kept.get(char, char)
         for char in text
-        if char.isalnum() or char in _KEPT_SYMBOLS or char == _DECIMAL_POINT
+        if char.isalnum() or char in _KEPT_SYMBOLS or char in kept
     )
 
 

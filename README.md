@@ -193,7 +193,8 @@ using the Python environment where you installed it instead.
    can be retried individually or all at once without reprocessing PDFs that already
    succeeded.
 7. On the **Results** tab, download `coded_data.csv` and `evidence.csv` — same
-   shape, `evidence.csv` has the supporting page/quote for each cell — plus one
+   shape, `evidence.csv` has the supporting page/quote for each cell, and
+   `quote_check.csv` reports whether each quote was found in the PDF's text — plus one
    readable `output/coded/<pdf>.yaml` per PDF for actually reading a handful of
    coded effects and quotes rather than scanning CSV columns. Each PDF's raw
    provider response is also viewable from the Run tab. Hand-check a few rows
