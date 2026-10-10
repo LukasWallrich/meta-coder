@@ -4,8 +4,8 @@
     "ok": 5
   },
   "cells": 272,
-  "correct": 237,
-  "accuracy": 0.8713,
+  "correct": 240,
+  "accuracy": 0.8824,
   "per_field": {
     "correlation": {
       "correct": 17,
@@ -36,7 +36,7 @@
       "cells": 17
     },
     "interdependence": {
-      "correct": 12,
+      "correct": 13,
       "cells": 17
     },
     "n_teams": {
@@ -56,7 +56,7 @@
       "cells": 17
     },
     "task_complexity": {
-      "correct": 8,
+      "correct": 9,
       "cells": 17
     },
     "team_function": {
@@ -64,7 +64,7 @@
       "cells": 17
     },
     "team_longevity": {
-      "correct": 9,
+      "correct": 10,
       "cells": 17
     },
     "top_management_team": {
@@ -74,15 +74,15 @@
   },
   "missing_values": {
     "same_code": 20,
-    "value_given": 6
+    "value_given": 3
   },
   "accuracy_by_confidence": {
     "high": {
-      "correct": 230,
+      "correct": 232,
       "cells": 261
     },
     "medium": {
-      "correct": 7,
+      "correct": 8,
       "cells": 11
     }
   },
@@ -285,24 +285,6 @@
       "field": "team_longevity",
       "expected": "stable",
       "coded": "months"
-    },
-    {
-      "row_id": "xia_2022_scanned_1",
-      "field": "interdependence",
-      "expected": "not_reported",
-      "coded": "high"
-    },
-    {
-      "row_id": "xia_2022_scanned_1",
-      "field": "task_complexity",
-      "expected": "not_reported",
-      "coded": "high"
-    },
-    {
-      "row_id": "xia_2022_scanned_1",
-      "field": "team_longevity",
-      "expected": "not_reported",
-      "coded": "years"
     }
   ]
 }

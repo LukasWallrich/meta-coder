@@ -1,8 +1,8 @@
 row_id,field,value,missing,compare,check,note
 kearney_2022_1,design,Experimental,,exact,,
 kearney_2022_1,setting,Lab,,exact,,
-kearney_2022_1,industry_sector,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
-kearney_2022_1,team_function,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
+kearney_2022_1,industry_sector,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
+kearney_2022_1,team_function,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
 kearney_2022_1,country,Germany,,exact,,
 kearney_2022_1,n_teams,142,,number:0.5,,
 kearney_2022_1,student_sample,true,,bool,,
@@ -17,8 +17,8 @@ kearney_2022_1,task_complexity,medium,,exact,,
 kearney_2022_1,team_longevity,hours,,exact,,
 kearney_2022_2,design,Experimental,,exact,,
 kearney_2022_2,setting,Lab,,exact,,
-kearney_2022_2,industry_sector,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
-kearney_2022_2,team_function,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
+kearney_2022_2,industry_sector,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
+kearney_2022_2,team_function,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
 kearney_2022_2,country,Germany,,exact,,
 kearney_2022_2,n_teams,142,,number:0.5,,
 kearney_2022_2,student_sample,true,,bool,,
@@ -33,8 +33,8 @@ kearney_2022_2,task_complexity,medium,,exact,,
 kearney_2022_2,team_longevity,hours,,exact,,
 kearney_2022_3,design,Experimental,,exact,,
 kearney_2022_3,setting,Lab,,exact,,
-kearney_2022_3,industry_sector,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
-kearney_2022_3,team_function,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
+kearney_2022_3,industry_sector,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
+kearney_2022_3,team_function,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
 kearney_2022_3,country,Germany,,exact,,
 kearney_2022_3,n_teams,142,,number:0.5,,
 kearney_2022_3,student_sample,true,,bool,,
@@ -49,8 +49,8 @@ kearney_2022_3,task_complexity,medium,,exact,,
 kearney_2022_3,team_longevity,hours,,exact,,
 kearney_2022_4,design,Experimental,,exact,,
 kearney_2022_4,setting,Lab,,exact,,
-kearney_2022_4,industry_sector,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
-kearney_2022_4,team_function,,not_applicable,exact,needs_validation,Lab experiment with student teams: no industry or work function.
+kearney_2022_4,industry_sector,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
+kearney_2022_4,team_function,,not_applicable,exact,validated,Lab experiment with student teams: no industry or work function.
 kearney_2022_4,country,Germany,,exact,,
 kearney_2022_4,n_teams,142,,number:0.5,,
 kearney_2022_4,student_sample,true,,bool,,
@@ -158,7 +158,7 @@ li_2018_1,performance_rater,Subjective - supervisor,,exact,,
 li_2018_1,correlation,-0.04,,number:0.011,,
 li_2018_1,interdependence,high,,exact,,
 li_2018_1,task_complexity,high,,exact,,
-li_2018_1,team_longevity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+li_2018_1,team_longevity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 li_2018_2,design,Observational,,exact,,
 li_2018_2,setting,Daily work,,exact,,
 li_2018_2,industry_sector,Finance,,exact,,
@@ -174,7 +174,7 @@ li_2018_2,performance_rater,Subjective - supervisor,,exact,,
 li_2018_2,correlation,-0.03,,number:0.011,,
 li_2018_2,interdependence,high,,exact,,
 li_2018_2,task_complexity,high,,exact,,
-li_2018_2,team_longevity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+li_2018_2,team_longevity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 li_2018_3,design,Observational,,exact,,
 li_2018_3,setting,Daily work,,exact,,
 li_2018_3,industry_sector,Finance,,exact,,
@@ -190,7 +190,7 @@ li_2018_3,performance_rater,Subjective - supervisor,,exact,,
 li_2018_3,correlation,0.11,,number:0.011,,
 li_2018_3,interdependence,high,,exact,,
 li_2018_3,task_complexity,high,,exact,,
-li_2018_3,team_longevity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+li_2018_3,team_longevity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 altiner_2018_1,design,Observational,,exact,,
 altiner_2018_1,setting,Daily work,,exact,,
 altiner_2018_1,industry_sector,Banking,,exact,,
@@ -268,9 +268,9 @@ xia_2022_1,diversity_domain,Cognitive,,exact,,
 xia_2022_1,diversity_measure_type,Separation,,exact,,
 xia_2022_1,performance_rater,Subjective - supervisor,,exact,,
 xia_2022_1,correlation,-0.15,,number:0.011,,
-xia_2022_1,interdependence,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-xia_2022_1,task_complexity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-xia_2022_1,team_longevity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+xia_2022_1,interdependence,high,,exact,validated,Blank in the original dataset; revised after review (research teams; Table 1 reports a mean team year of 2.57).
+xia_2022_1,task_complexity,high,,exact,validated,Blank in the original dataset; revised after review (research teams; Table 1 reports a mean team year of 2.57).
+xia_2022_1,team_longevity,years,,exact,validated,Blank in the original dataset; revised after review (research teams; Table 1 reports a mean team year of 2.57).
 guo_2021_1,design,Observational,,exact,,
 guo_2021_1,setting,Daily work,,exact,,
 guo_2021_1,industry_sector,Multiple/mixed,,exact,,
@@ -284,8 +284,8 @@ guo_2021_1,diversity_domain,Cognitive,,exact,,
 guo_2021_1,diversity_measure_type,Separation,,exact,,
 guo_2021_1,performance_rater,Subjective - self,,exact,,
 guo_2021_1,correlation,-0.09,,number:0.011,,
-guo_2021_1,interdependence,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-guo_2021_1,task_complexity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+guo_2021_1,interdependence,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
+guo_2021_1,task_complexity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 guo_2021_1,team_longevity,years,,exact,,
 guo_2021_2,design,Observational,,exact,,
 guo_2021_2,setting,Daily work,,exact,,
@@ -297,11 +297,11 @@ guo_2021_2,student_sample,false,,bool,,
 guo_2021_2,top_management_team,false,,bool,,
 guo_2021_2,data_collection_years,,not_reported,years,,
 guo_2021_2,diversity_domain,Demographic,,exact,,
-guo_2021_2,diversity_measure_type,,not_reported,exact,needs_validation,Original note: Measure not specified.
+guo_2021_2,diversity_measure_type,,not_reported,exact,validated,Original note: Measure not specified.
 guo_2021_2,performance_rater,Subjective - self,,exact,,
 guo_2021_2,correlation,-0.15,,number:0.011,,
-guo_2021_2,interdependence,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-guo_2021_2,task_complexity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+guo_2021_2,interdependence,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
+guo_2021_2,task_complexity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 guo_2021_2,team_longevity,years,,exact,,
 guo_2021_3,design,Observational,,exact,,
 guo_2021_3,setting,Daily work,,exact,,
@@ -316,8 +316,8 @@ guo_2021_3,diversity_domain,Demographic,,exact,,
 guo_2021_3,diversity_measure_type,Variety,,exact,,
 guo_2021_3,performance_rater,Subjective - self,,exact,,
 guo_2021_3,correlation,-0.04,,number:0.011,,
-guo_2021_3,interdependence,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-guo_2021_3,task_complexity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+guo_2021_3,interdependence,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
+guo_2021_3,task_complexity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 guo_2021_3,team_longevity,years,,exact,,
 guo_2021_4,design,Observational,,exact,,
 guo_2021_4,setting,Daily work,,exact,,
@@ -329,11 +329,11 @@ guo_2021_4,student_sample,false,,bool,,
 guo_2021_4,top_management_team,false,,bool,,
 guo_2021_4,data_collection_years,,not_reported,years,,
 guo_2021_4,diversity_domain,Job-related,,exact,,
-guo_2021_4,diversity_measure_type,,not_reported,exact,needs_validation,Original note: Measure not specified.
+guo_2021_4,diversity_measure_type,,not_reported,exact,validated,Original note: Measure not specified.
 guo_2021_4,performance_rater,Subjective - self,,exact,,
 guo_2021_4,correlation,-0.07,,number:0.011,,
-guo_2021_4,interdependence,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-guo_2021_4,task_complexity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+guo_2021_4,interdependence,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
+guo_2021_4,task_complexity,,not_reported,exact,validated,Blank in the original dataset; kept as not reported after review.
 guo_2021_4,team_longevity,years,,exact,,
 ma_2021_1,design,Observational,,exact,,
 ma_2021_1,setting,Daily work,,exact,,
@@ -345,7 +345,7 @@ ma_2021_1,student_sample,false,,bool,,
 ma_2021_1,top_management_team,true,,bool,,
 ma_2021_1,data_collection_years,2020,,years,,
 ma_2021_1,diversity_domain,Job-related,,exact,,
-ma_2021_1,diversity_measure_type,,not_reported,exact,needs_validation,Original note: Measure not specified.
+ma_2021_1,diversity_measure_type,,not_reported,exact,validated,Original note: Measure not specified.
 ma_2021_1,performance_rater,Objective,,exact,,
 ma_2021_1,correlation,0.02,,number:0.011,,
 ma_2021_1,interdependence,high,,exact,,
@@ -361,7 +361,7 @@ ma_2021_2,student_sample,false,,bool,,
 ma_2021_2,top_management_team,true,,bool,,
 ma_2021_2,data_collection_years,2020,,years,,
 ma_2021_2,diversity_domain,Cognitive,,exact,,
-ma_2021_2,diversity_measure_type,,not_reported,exact,needs_validation,Original note: education - Measure not specified.
+ma_2021_2,diversity_measure_type,,not_reported,exact,validated,Original note: education - Measure not specified.
 ma_2021_2,performance_rater,Objective,,exact,,
 ma_2021_2,correlation,0.03,,number:0.011,,
 ma_2021_2,interdependence,high,,exact,,
@@ -377,7 +377,7 @@ ma_2021_3,student_sample,false,,bool,,
 ma_2021_3,top_management_team,true,,bool,,
 ma_2021_3,data_collection_years,2020,,years,,
 ma_2021_3,diversity_domain,Job-related,,exact,,
-ma_2021_3,diversity_measure_type,,not_reported,exact,needs_validation,Original note: Measure not specified.
+ma_2021_3,diversity_measure_type,,not_reported,exact,validated,Original note: Measure not specified.
 ma_2021_3,performance_rater,Objective,,exact,,
 ma_2021_3,correlation,-0.14,,number:0.011,,
 ma_2021_3,interdependence,high,,exact,,
@@ -393,7 +393,7 @@ ma_2021_4,student_sample,false,,bool,,
 ma_2021_4,top_management_team,true,,bool,,
 ma_2021_4,data_collection_years,2020,,years,,
 ma_2021_4,diversity_domain,Demographic,,exact,,
-ma_2021_4,diversity_measure_type,,not_reported,exact,needs_validation,Original note: Measure not specified.
+ma_2021_4,diversity_measure_type,,not_reported,exact,validated,Original note: Measure not specified.
 ma_2021_4,performance_rater,Objective,,exact,,
 ma_2021_4,correlation,-0.14,,number:0.011,,
 ma_2021_4,interdependence,high,,exact,,
@@ -409,7 +409,7 @@ ma_2021_5,student_sample,false,,bool,,
 ma_2021_5,top_management_team,true,,bool,,
 ma_2021_5,data_collection_years,2020,,years,,
 ma_2021_5,diversity_domain,Demographic,,exact,,
-ma_2021_5,diversity_measure_type,,not_reported,exact,needs_validation,Original note: Measure not specified.
+ma_2021_5,diversity_measure_type,,not_reported,exact,validated,Original note: Measure not specified.
 ma_2021_5,performance_rater,Objective,,exact,,
 ma_2021_5,correlation,-0.08,,number:0.011,,
 ma_2021_5,interdependence,high,,exact,,
@@ -524,6 +524,6 @@ xia_2022_scanned_1,diversity_domain,Cognitive,,exact,,
 xia_2022_scanned_1,diversity_measure_type,Separation,,exact,,
 xia_2022_scanned_1,performance_rater,Subjective - supervisor,,exact,,
 xia_2022_scanned_1,correlation,-0.15,,number:0.011,,
-xia_2022_scanned_1,interdependence,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-xia_2022_scanned_1,task_complexity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
-xia_2022_scanned_1,team_longevity,,not_reported,exact,needs_validation,Original coders left this blank; could also be unclear.
+xia_2022_scanned_1,interdependence,high,,exact,validated,Blank in the original dataset; revised after review (research teams; Table 1 reports a mean team year of 2.57).
+xia_2022_scanned_1,task_complexity,high,,exact,validated,Blank in the original dataset; revised after review (research teams; Table 1 reports a mean team year of 2.57).
+xia_2022_scanned_1,team_longevity,years,,exact,validated,Blank in the original dataset; revised after review (research teams; Table 1 reports a mean team year of 2.57).

@@ -27,7 +27,7 @@ The articles and their codes are from Wallrich et al. (2024), *The relationship 
 
 Two things differ from the original data:
 
-- **Missing codes.** The original dataset has one blank for every missing value. Here each blank is split into `not_reported` or `not_applicable`. Cells where that split, or the original blank itself, still needs a human decision are marked `needs_validation` in the `check` column.
+- **Missing codes.** The original dataset has one blank for every missing value. Here each blank is split into `not_reported` or `not_applicable`. Cells where that split needed a decision were reviewed by the meta-analysis's first author and are marked `validated` in the `check` column; the `note` column records the reason. For `xia_2022`, three blanks were replaced by values on review.
 - **Reversed correlations.** For `qamar_2022` the original coding reversed the sign of the correlations, so only their size is compared (`number_abs`).
 
 Fields about the study repeat on every row of the same article, so one disagreement on such a field counts once per row.
