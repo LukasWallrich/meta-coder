@@ -66,6 +66,8 @@
 <p>The matching cell in <code>evidence.csv</code> explains the reason. Recode these three texts as missing values before analysis, and decide for each field whether <code>Not Applicable</code> belongs in the analysis as its own category.</p>
 <p><code>Unclear</code> cells are the ones most worth reading yourself. The results table shows how many each PDF has as <strong>cells to check</strong>, and the per-PDF YAML records the same count. This count does not change a PDF's status, and a later run does not recode the PDF because of it.</p>
 <p>Results coded before these three reasons existed show <code>Not Reported</code> for every missing value.</p>
+<h2 id="fields-with-several-categories">Fields with several categories<a class="headerlink" href="#fields-with-several-categories" title="Permanent link">&para;</a></h2>
+<p>For a field that <a href="../manual/#fields-where-several-categories-apply">allows several categories</a>, the cell in <code>coded_data.csv</code> lists every selected category, separated by <code>;</code> and in the order the manual defines them, for example <code>survey; interview</code>. Split the cell on <code>;</code> to analyse the categories separately. If no category applies, the cell holds one of the <a href="#missing-values">missing-value texts</a>.</p>
 <h2 id="download-the-data">Download the data<a class="headerlink" href="#download-the-data" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -102,7 +104,7 @@
         <a href="../auditing/"><small>Next</small>Audit and reproducibility →</a>
       </nav>
     </main>
-    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#review-each-study">Review each study</a><a href="#missing-values">Missing values</a><a href="#download-the-data">Download the data</a><a href="#preserve-a-run">Preserve a run</a></nav></aside>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#review-each-study">Review each study</a><a href="#missing-values">Missing values</a><a href="#fields-with-several-categories">Fields with several categories</a><a href="#download-the-data">Download the data</a><a href="#preserve-a-run">Preserve a run</a></nav></aside>
   </div>
 </body>
 </html>

@@ -528,6 +528,30 @@ test('optional upload and editor controls can be absent without breaking the pag
   assert.equal(w.projectEdits.dirty(), true);
 });
 
+test('ticking several categories is saved, and switching to a number resets it', t => {
+  const { w, d } = setup(t, 'project', w => {
+    w.document.getElementById('manual-editor-data').textContent = JSON.stringify({
+      effects: [{ name: 'outcome', type: 'string', levels: [{ value: 'accuracy', description: '' }, { value: 'speed', description: '' }] }],
+    });
+  });
+  const block = [...d.querySelectorAll('#effect-fields-list details')]
+    .find(el => el.querySelector('[data-field="name"]').value === 'outcome');
+  const box = block.querySelector('[data-field="multiple"]');
+  const form = d.getElementById('manual-form');
+  form.addEventListener('submit', e => e.preventDefault());
+  assert.equal(box.checked, false);
+  box.checked = true;
+  box.dispatchEvent(new w.Event('change', { bubbles: true }));
+  submit(w, form);
+  let field = JSON.parse(d.getElementById('manual-json-input').value).effects.find(f => f.name === 'outcome');
+  assert.equal(field.multiple, true);
+  change(w, block.querySelector('[data-field="type"]'), 'number', 'change');
+  assert.equal(box.checked, false);
+  submit(w, form);
+  field = JSON.parse(d.getElementById('manual-json-input').value).effects.find(f => f.name === 'outcome');
+  assert.equal(field.multiple, false);
+});
+
 test('empty editor payload still permits adding a coding field', t => {
   const { d } = setup(t, 'project', w => {
     w.document.getElementById('manual-editor-data').textContent = '{}';
