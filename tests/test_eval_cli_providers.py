@@ -170,11 +170,27 @@ def test_claude_cli_response_missing_a_requested_row_needs_review(monkeypatch, m
     assert dropped in result.missing_ids
 
 
+CATALOG = {"models": [
+    {"slug": "gpt-6.1-sol", "tool_mode": "code_mode_only", "apply_patch_tool_type": "freeform",
+     "experimental_supported_tools": ["clock"], "context_window": 1000},
+    {"slug": "X", "tool_mode": "code_mode_only"},
+]}
+
+
+@pytest.fixture
+def codex_login(monkeypatch, tmp_path):
+    (tmp_path / "auth.json").write_text('{"login": true}', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    return tmp_path / "auth.json"
+
+
 def _codex_run(monkeypatch, manual, rows, pdf, model="", write_reply=True, pages=2):
     seen = {}
 
     def respond(command, kwargs):
         workspace = Path(kwargs["cwd"])
+        if command[:3] == ["codex", "debug", "models"]:
+            return subprocess.CompletedProcess(command, 0, json.dumps(CATALOG), "")
         if command[0] == "pdftoppm":
             seen["pdftoppm"] = command
             for number in range(1, pages + 1):
@@ -183,6 +199,9 @@ def _codex_run(monkeypatch, manual, rows, pdf, model="", write_reply=True, pages
         seen["command"] = command
         seen["files"] = sorted(path.name for path in workspace.iterdir())
         seen["input"] = kwargs["input"]
+        home = Path(kwargs["env"]["CODEX_HOME"])
+        seen["home"] = {path.name: path.resolve() for path in home.iterdir()}
+        seen["catalog"] = json.loads((workspace / "catalog.json").read_text(encoding="utf-8"))
         if write_reply:
             (workspace / "reply.json").write_text(json.dumps(_baseline_response()), encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, _codex_events(), "")
@@ -194,7 +213,7 @@ def _codex_run(monkeypatch, manual, rows, pdf, model="", write_reply=True, pages
     return result, seen
 
 
-def test_codex_cli_reads_the_reply_file_and_counts_tokens(monkeypatch, manual, kearney):
+def test_codex_cli_reads_the_reply_file_and_counts_tokens(monkeypatch, manual, kearney, codex_login):
     pdf, rows = kearney
     result, seen = _codex_run(monkeypatch, manual, rows, pdf)
 
@@ -213,26 +232,62 @@ def test_codex_cli_reads_the_reply_file_and_counts_tokens(monkeypatch, manual, k
     assert "Text layer of the article" in seen["input"]
 
 
-def test_codex_cli_always_names_a_model(monkeypatch, manual, kearney):
+def test_codex_cli_runs_in_a_home_that_holds_only_the_login(monkeypatch, manual, kearney, codex_login):
+    pdf, rows = kearney
+    _, seen = _codex_run(monkeypatch, manual, rows, pdf)
+    assert seen["home"] == {"auth.json": codex_login}
+    overrides = [seen["command"][i + 1] for i, part in enumerate(seen["command"]) if part == "-c"]
+    assert "skills.include_instructions=false" in overrides
+
+
+def test_codex_cli_sends_the_models_catalog_entry_without_tools(monkeypatch, manual, kearney, codex_login):
+    pdf, rows = kearney
+    _, seen = _codex_run(monkeypatch, manual, rows, pdf)
+    assert seen["catalog"] == {"models": [{
+        "slug": "gpt-6.1-sol", "tool_mode": "direct", "apply_patch_tool_type": None,
+        "experimental_supported_tools": [], "context_window": 1000,
+    }]}
+    overrides = [seen["command"][i + 1] for i, part in enumerate(seen["command"]) if part == "-c"]
+    assert "model_catalog_json='catalog.json'" in overrides
+
+
+def test_codex_cli_is_an_error_for_a_model_codex_does_not_list(monkeypatch, manual, kearney, codex_login):
+    pdf, rows = kearney
+    result, seen = _codex_run(monkeypatch, manual, rows, pdf, model="no-such-model")
+    assert result.status == "error"
+    assert "does not list a model" in result.error
+    assert "command" not in seen
+
+
+def test_codex_cli_is_an_error_without_a_login_file(monkeypatch, manual, kearney, tmp_path):
+    pdf, rows = kearney
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    result, seen = _codex_run(monkeypatch, manual, rows, pdf)
+    assert result.status == "error"
+    assert "codex login" in result.error
+    assert "command" not in seen
+
+
+def test_codex_cli_always_names_a_model(monkeypatch, manual, kearney, codex_login):
     pdf, rows = kearney
     _, seen = _codex_run(monkeypatch, manual, rows, pdf, model="")
     assert seen["command"][seen["command"].index("--model") + 1] == "gpt-6.1-sol"
 
 
-def test_codex_cli_passes_the_requested_model(monkeypatch, manual, kearney):
+def test_codex_cli_passes_the_requested_model(monkeypatch, manual, kearney, codex_login):
     pdf, rows = kearney
     _, seen = _codex_run(monkeypatch, manual, rows, pdf, model="X")
     assert seen["command"][seen["command"].index("--model") + 1] == "X"
 
 
-def test_codex_cli_without_a_reply_file_is_an_error(monkeypatch, manual, kearney):
+def test_codex_cli_without_a_reply_file_is_an_error(monkeypatch, manual, kearney, codex_login):
     pdf, rows = kearney
     result, _ = _codex_run(monkeypatch, manual, rows, pdf, write_reply=False)
     assert result.status == "error"
     assert "returned no final message" in result.error
 
 
-def test_codex_cli_sends_only_page_images_for_a_pdf_without_a_text_layer(monkeypatch, manual):
+def test_codex_cli_sends_only_page_images_for_a_pdf_without_a_text_layer(monkeypatch, manual, codex_login):
     pdf = EVALS / "pdfs" / "xia_2022_scanned.pdf"
     rows = run_eval.rows_by_pdf("small")["xia_2022_scanned.pdf"]
     _, seen = _codex_run(monkeypatch, manual, rows, pdf)
@@ -240,7 +295,7 @@ def test_codex_cli_sends_only_page_images_for_a_pdf_without_a_text_layer(monkeyp
     assert "Text layer of the article" not in seen["input"]
 
 
-def test_codex_cli_is_an_error_when_no_page_image_is_rendered(monkeypatch, manual, kearney):
+def test_codex_cli_is_an_error_when_no_page_image_is_rendered(monkeypatch, manual, kearney, codex_login):
     pdf, rows = kearney
     result, seen = _codex_run(monkeypatch, manual, rows, pdf, pages=0)
     assert result.status == "error"
@@ -248,7 +303,7 @@ def test_codex_cli_is_an_error_when_no_page_image_is_rendered(monkeypatch, manua
     assert "command" not in seen
 
 
-def test_codex_cli_is_an_error_without_pdftoppm(monkeypatch, manual, kearney):
+def test_codex_cli_is_an_error_without_pdftoppm(monkeypatch, manual, kearney, codex_login):
     pdf, rows = kearney
 
     def respond(command, kwargs):

@@ -21,8 +21,11 @@ tools:
   the prompt (when the PDF has one) and the pages as images, rendered with
   poppler's `pdftoppm`.
 
-Both CLIs add their own prompt around ours, and that prompt changes between
-CLI versions, so each result records the version that produced it.
+Codex needs more than settings to send nothing but our text: it runs in a
+temporary home that holds only a link to the login, because it reads the
+user's global AGENTS.md from its home, and with a copy of the model's catalog
+entry that lists no tools. Each result records the CLI version, since what a
+CLI adds can change between versions.
 """
 
 from __future__ import annotations
@@ -75,9 +78,9 @@ CODEX_INSTRUCTIONS = (
     "attached page images and the article text in the message, and return "
     "only the requested JSON."
 )
-# Codex has no single switch for "no agent prompt": each part it adds around
-# ours is turned off by its own setting. What no setting removes is the list
-# of the user's own skills and their global AGENTS.md.
+# Codex has no single switch for "no agent prompt"; each part it adds around
+# ours has its own. These settings remove the instruction blocks, and
+# `_codex_home` and `_codex_catalog` remove what no setting covers.
 CODEX_OVERRIDES = (
     "approval_policy='never'",
     "mcp_servers={}",
@@ -86,16 +89,19 @@ CODEX_OVERRIDES = (
     "project_doc_max_bytes=0",
     "memories.generate_memories=false",
     "memories.use_memories=false",
+    "skills.include_instructions=false",
     "skills.bundled.enabled=false",
     "include_permissions_instructions=false",
     "include_apps_instructions=false",
     "include_environment_context=false",
     "include_collaboration_mode_instructions=false",
+    "tools.experimental_request_user_input.enabled=false",
 )
 CODEX_DISABLED_FEATURES = (
-    "shell_tool", "unified_exec", "plugins", "apps", "skill_search", "tool_suggest",
-    "remote_plugin", "plugin_sharing", "goals", "multi_agent", "image_generation",
-    "view_image", "sleep_tool", "browser_use", "browser_use_external", "computer_use",
+    "shell_tool", "unified_exec", "code_mode", "code_mode_only", "plugins", "apps",
+    "recommended_plugins", "skill_search", "tool_suggest", "remote_plugin", "plugin_sharing",
+    "goals", "multi_agent", "multi_agent_v2", "image_generation", "view_image", "sleep_tool",
+    "current_time_reminder", "browser_use", "browser_use_external", "computer_use",
     "in_app_browser", "collaboration_modes", "hooks", "workspace_dependencies", "worktrees",
 )
 
@@ -144,12 +150,60 @@ def _page_images(pdf_path: Path, workspace: Path) -> list[Path]:
     return pages
 
 
-def _run(command: list[str], prompt: str, workspace: Path) -> str:
+def _codex_home(workspace: Path) -> Path:
+    """A Codex home that holds nothing but the login.
+
+    Codex reads the user's global AGENTS.md from its home folder and has no
+    setting to leave it out. The login is linked, not copied: Codex rewrites
+    `auth.json` in place when it renews the login, so the renewed one lands
+    in the user's real file.
+    """
+
+    login = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+    if not login.is_file():
+        raise ProviderError(
+            f"codex_cli needs a Codex login stored in {login} (run `codex login`; "
+            "a login kept in the system keyring cannot be used)."
+        )
+    home = workspace / "codex-home"
+    home.mkdir()
+    try:
+        (home / "auth.json").symlink_to(login)
+    except OSError as exc:
+        raise ProviderError(f"Could not link the Codex login into a temporary folder: {exc}") from exc
+    return home
+
+
+def _codex_catalog(model: str, workspace: Path) -> Path:
+    """The model's own catalog entry with its tools removed.
+
+    The catalog, not a setting, decides which tool definitions Codex sends
+    with every request, so the entry is copied from `codex debug models` and
+    only its three tool fields are changed.
+    """
+
+    try:
+        catalog = json.loads(_run(["codex", "debug", "models"], "", workspace))
+    except json.JSONDecodeError as exc:
+        raise ProviderError("`codex debug models` did not return JSON.") from exc
+    models = catalog.get("models") if isinstance(catalog, dict) else catalog
+    entry = next(
+        (item for item in models or [] if isinstance(item, dict) and item.get("slug") == model), None,
+    )
+    if entry is None:
+        raise ProviderError(f"Codex does not list a model named {model!r}.")
+    entry = {**entry, "tool_mode": "direct", "apply_patch_tool_type": None, "experimental_supported_tools": []}
+    path = workspace / "catalog.json"
+    path.write_text(json.dumps({"models": [entry]}), encoding="utf-8")
+    return path
+
+
+def _run(command: list[str], prompt: str, workspace: Path, env: dict[str, str] | None = None) -> str:
     name = command[0]
     try:
         done = subprocess.run(
             command, input=prompt, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=TIMEOUT_SEC, env=clean_env(), cwd=workspace,
+            errors="replace", timeout=TIMEOUT_SEC, env={**clean_env(), **(env or {})}, cwd=workspace,
         )
     except FileNotFoundError as exc:
         raise ProviderError(f"`{name}` is not installed or not on PATH.") from exc
@@ -212,14 +266,18 @@ def _call_codex(
         "codex", "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
         "--ignore-rules", "--strict-config", "--sandbox", "read-only", "--model", model,
     ]
-    for override in (*CODEX_OVERRIDES, "model_instructions_file='instructions.md'"):
+    home = _codex_home(workspace)
+    catalog = _codex_catalog(model, workspace)
+    for override in (
+        *CODEX_OVERRIDES, "model_instructions_file='instructions.md'", f"model_catalog_json='{catalog.name}'",
+    ):
         command += ["-c", override]
     for feature in CODEX_DISABLED_FEATURES:
         command += ["--disable", feature]
     for page in pages:
         command += ["--image", page.name]
     command += ["--output-schema", "schema.json", "--output-last-message", "reply.json", "--json", "-"]
-    events = _run(command, prompt, workspace)
+    events = _run(command, prompt, workspace, env={"CODEX_HOME": str(home)})
     reply = workspace / "reply.json"
     if not reply.is_file():
         raise ProviderError("`codex` returned no final message.", raw_response=events)
