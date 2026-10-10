@@ -556,6 +556,7 @@ def _project_view(
         "has_results": bool(run_state) or bool(completed_articles) or (coded_csv.is_file() and evidence_csv.is_file()),
         "result_files_available": coded_csv.is_file() and evidence_csv.is_file(),
         "confidence_file_available": (project.output_dir / "confidence.csv").is_file(),
+        "quote_check_file_available": (project.output_dir / "quote_check.csv").is_file(),
         "audit_files": audit_files,
         "run_settings": run_settings,
         "manual_generator_provider": generator_provider,
@@ -1245,6 +1246,14 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="No confidence ratings yet.")
         return FileResponse(path, media_type="text/csv", filename=f"{project.name}-confidence.csv")
+
+    @app.get(f"/{token}/projects/{{project_id}}/download/quote-check")
+    async def download_quote_check(project_id: str):
+        project = runtime.project(project_id)
+        path = project.output_dir / "quote_check.csv"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="No quote checks yet.")
+        return FileResponse(path, media_type="text/csv", filename=f"{project.name}-quote_check.csv")
 
     @app.get(f"/{token}/projects/{{project_id}}/audit/{{filename}}")
     async def view_audit(project_id: str, filename: str):

@@ -17,7 +17,7 @@ from .manual import CodingManual
 # wording, the codebook rendering below, and the response schema built by
 # mechanism.build_response_schema. Bump it whenever any of those change in a way
 # that could change what a model returns, so stored results can be told apart.
-PROMPT_VERSION = "5"
+PROMPT_VERSION = "6"
 
 BASELINE_RULES = """You are a research assistant coding effects for a meta-analysis.
 
@@ -35,8 +35,15 @@ Rules:
    "missing" to null. A missing field is invalid.
 3. Code values must follow the exact formatting the field description specifies
    (units, decimal places, category label text).
-4. "evidence" must be concise but specific: include a page number and/or a short
-   quotation, not a vague paraphrase.
+4. "evidence" must be concise but specific: say where in the article the value
+   comes from (section, table or figure) and how you derived it, not a vague
+   paraphrase. Put the passage that supports the value in "quote", copied exactly as
+   it appears in the article: the same words, spelling and numbers, with nothing
+   paraphrased, corrected or left out, and at most about 40 words. Quote one
+   continuous passage; do not join separate passages. Set "quote" to null when the
+   value comes from a table or figure, or when nothing can be quoted, as for a value
+   that is not reported. Set "page" to the page of the PDF file the passage or value
+   is on, counting the file's first page as 1, or to null if you cannot tell.
 5. For a categorical field, set "value" to exactly one of its listed levels, using
    the level descriptions to decide which applies. If more than one level seems to
    apply, choose the best fit and explain the ambiguity in the row's `notes` field.

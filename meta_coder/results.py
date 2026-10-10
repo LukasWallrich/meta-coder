@@ -62,14 +62,17 @@ def _cell_text(value: object, spec: FieldSpec) -> str:
 def _needs_check(cell: object) -> bool:
     if not isinstance(cell, dict):
         return False
-    return (cell.get("value") is None and cell.get("missing") == "unclear") or (
-        cell.get("confidence") == "low"
+    return (
+        (cell.get("value") is None and cell.get("missing") == "unclear")
+        or cell.get("confidence") == "low"
+        or cell.get("quote_check") == "not_found"
     )
 
 
 def cells_to_check(coded_by_row_id: object) -> int:
     """How many coded cells a person should look at first: those the model
-    marked `unclear` or gave low confidence. Never affects a PDF's status."""
+    marked `unclear` or gave low confidence, and those whose quote was not
+    found in the PDF (see quote_check.py). Never affects a PDF's status."""
 
     if not isinstance(coded_by_row_id, dict):
         return 0
@@ -88,7 +91,24 @@ def _audit_field(field_value: dict) -> dict[str, Any]:
     if "confidence" in field_value:
         entry["confidence"] = field_value["confidence"]
     entry["evidence"] = field_value.get("evidence")
+    for key in ("quote", "page", "quote_check", "quote_found_page"):
+        if field_value.get(key) is not None:
+            entry[key] = field_value[key]
     return entry
+
+
+def _evidence_text(field_value: dict) -> str:
+    """One evidence.csv cell: the page and quote, when the model gave them,
+    ahead of its evidence text. Results without either read as they always did."""
+
+    text = str(field_value.get("evidence", ""))
+    quote = field_value.get("quote")
+    if isinstance(quote, str) and quote.strip():
+        text = " — ".join(part for part in (f'"{quote.strip()}"', text) if part)
+    page = field_value.get("page")
+    if isinstance(page, int) and not isinstance(page, bool):
+        text = f"p. {page}: {text}" if text else f"p. {page}"
+    return text
 
 
 def collate_results(
@@ -118,7 +138,7 @@ def collate_results(
                 if value is None
                 else _cell_text(value, manual.effects[field_name])
             )
-            evidence_row[field_name] = str(field_value.get("evidence", ""))
+            evidence_row[field_name] = _evidence_text(field_value)
 
         coded_rows.append(coded_row)
         evidence_rows.append(evidence_row)

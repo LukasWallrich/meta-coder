@@ -50,6 +50,15 @@ MISSING_CODES = ("not_reported", "not_applicable", "unclear")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
 
 
+def _nullable(kind: str, type_map: dict[str, str], description: str) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": type_map[kind], "description": description}
+    if type_map is JSON_SCHEMA_TYPE:
+        schema["type"] = [type_map[kind], "null"]
+    else:
+        schema["nullable"] = True
+    return schema
+
+
 def _missing_schema(type_map: dict[str, str]) -> dict[str, Any]:
     schema: dict[str, Any] = {
         "type": type_map["string"],
@@ -110,9 +119,21 @@ def _coded_field_schema(
     if spec.evidence_required:
         properties["evidence"] = {
             "type": type_map["string"],
-            "description": "Page number and/or short quotation supporting this value.",
+            "description": "Where in the article this value comes from and how it was derived.",
         }
-        required.append("evidence")
+        properties["quote"] = _nullable(
+            "string",
+            type_map,
+            "Passage supporting this value, copied exactly from the article; null if "
+            "the value comes from a table or figure or nothing can be quoted.",
+        )
+        properties["page"] = _nullable(
+            "integer",
+            type_map,
+            "Page of the PDF file the passage or value is on, counting its first page "
+            "as 1; null if unknown.",
+        )
+        required.extend(["evidence", "quote", "page"])
     schema = {
         "type": type_map["object"],
         "description": spec.description or f"Coded value for `{name}`.",
@@ -230,6 +251,17 @@ def _valid_missing_code(field: dict) -> bool:
     return code is None
 
 
+def _valid_quote(field: dict) -> bool:
+    """`quote` is text or null and `page` a whole number or null. Either may be
+    left out by an endpoint that does not enforce the schema."""
+
+    quote = field.get("quote")
+    page = field.get("page")
+    return (quote is None or isinstance(quote, str)) and (
+        page is None or (isinstance(page, int) and not isinstance(page, bool))
+    )
+
+
 def validate_response(
     parsed: object,
     requested_row_ids: set[str],
@@ -322,7 +354,11 @@ def validate_response(
                 ):
                     names.append(name)
                 elif isinstance(expected_fields, dict) and expected_fields[name].evidence_required:
-                    if not isinstance(field.get("evidence"), str) or not field["evidence"].strip():
+                    if (
+                        not isinstance(field.get("evidence"), str)
+                        or not field["evidence"].strip()
+                        or not _valid_quote(field)
+                    ):
                         names.append(name)
             if names:
                 invalid[row_id] = sorted(names)

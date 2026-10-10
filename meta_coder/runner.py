@@ -424,7 +424,13 @@ class Runner:
             (project.output_dir / "evidence.csv").write_text(
                 rows_to_csv(evidence_rows, manual), encoding="utf-8"
             )
-            output_names = ["coded_data.csv", "evidence.csv"]
+            quote_check_rows = collate_field_key(
+                "quote_check", manual=manual, coding_sheet=coding_sheet, results_by_pdf=results_by_pdf
+            )
+            (project.output_dir / "quote_check.csv").write_text(
+                rows_to_csv(quote_check_rows, manual), encoding="utf-8"
+            )
+            output_names = ["coded_data.csv", "evidence.csv", "quote_check.csv"]
             if manual.confidence:
                 confidence_rows = collate_field_key(
                     "confidence", manual=manual, coding_sheet=coding_sheet, results_by_pdf=results_by_pdf
