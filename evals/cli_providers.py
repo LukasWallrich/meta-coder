@@ -13,8 +13,9 @@ through each CLI's own structured-output option rather than in the prompt.
 
 - Claude Code gets one tool, Read, confined to a directory that holds only the
   PDF, so it reads the article itself (scanned PDFs included).
-- Codex takes no PDF, so it gets the text layer in the prompt and no tools. A
-  PDF without a text layer ends as an error.
+- Codex has no tool that reads a PDF: with file access it improvises with
+  whatever shell tools the machine has. So it gets the text layer in the
+  prompt and no tools, and a PDF without a text layer ends as an error.
 
 Both CLIs add their own prompt around ours, and that prompt changes between
 CLI versions, so each result records the version that produced it.
@@ -40,8 +41,9 @@ from meta_coder.quote_check import annotate_quote_checks
 
 PROVIDERS = ("claude_cli", "codex_cli")
 BINARIES = {"claude_cli": "claude", "codex_cli": "codex"}
-# An empty Codex model leaves the choice to the CLI's own default.
-DEFAULT_MODELS = {"claude_cli": "sonnet", "codex_cli": ""}
+# Codex always gets a named model: left to the CLI's own default, a result
+# would not say which model produced it.
+DEFAULT_MODELS = {"claude_cli": "sonnet", "codex_cli": "gpt-6.1-sol"}
 TIMEOUT_SEC = 900
 
 # With one of these set, the CLI bills an API account or calls another
@@ -151,12 +153,10 @@ def _call_codex(
     (workspace / "instructions.md").write_text(CODEX_INSTRUCTIONS, encoding="utf-8")
     command = [
         "codex", "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
-        "--ignore-rules", "--strict-config", "--sandbox", "read-only",
+        "--ignore-rules", "--strict-config", "--sandbox", "read-only", "--model", model,
     ]
     for override in (*CODEX_OVERRIDES, "model_instructions_file='instructions.md'"):
         command += ["-c", override]
-    if model:
-        command += ["--model", model]
     command += ["--output-schema", "schema.json", "--output-last-message", "reply.json", "--json", "-"]
     events = _run(command, prompt, workspace)
     reply = workspace / "reply.json"

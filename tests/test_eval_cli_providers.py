@@ -200,10 +200,10 @@ def test_codex_cli_reads_the_reply_file_and_counts_tokens(monkeypatch, manual, k
     assert "Article text:" in seen["input"]
 
 
-def test_codex_cli_omits_the_model_flag_when_no_model_is_given(monkeypatch, manual, kearney):
+def test_codex_cli_always_names_a_model(monkeypatch, manual, kearney):
     pdf, rows = kearney
     _, seen = _codex_run(monkeypatch, manual, rows, pdf, model="")
-    assert "--model" not in seen["command"]
+    assert seen["command"][seen["command"].index("--model") + 1] == "gpt-6.1-sol"
 
 
 def test_codex_cli_passes_the_requested_model(monkeypatch, manual, kearney):

@@ -51,14 +51,14 @@ python evals/run_eval.py replay evals/runs/my-run
 
 ```sh
 python evals/run_eval.py run --set small --provider claude_cli --name my-claude-run
-python evals/run_eval.py run --set small --provider codex_cli --model MODEL --name my-codex-run
+python evals/run_eval.py run --set small --provider codex_cli --name my-codex-run
 ```
 
 `claude_cli` runs the installed Claude Code CLI (`claude -p`) and `codex_cli` runs the Codex CLI (`codex exec`). Each uses the plan its CLI is signed in to, so no API key is needed. The prompt, schema, validation and quote check are the same as for the other providers. The approach follows [coarse](https://github.com/Davidvandijcke/coarse), which runs its paper reviews through the same CLIs.
 
 - **Isolation.** Every PDF is coded in an empty temporary folder, with the CLI's MCP servers, user configuration, project instructions and session saving turned off. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and related variables are removed for the call, because with one of them set the CLI bills an API account instead of the plan.
 - **Claude Code** gets our own short system prompt and one tool, Read, limited to a folder that holds only the PDF. It reads the article itself, so the image-only copy can be coded too.
-- **Codex** gets our own short instructions and no tools. It cannot take a PDF, so it receives the text layer in the prompt, and the image-only copy ends as `error`. Without `--model` it uses the CLI's default model, which the result then does not name.
+- **Codex** gets our own short instructions and no tools. It has no tool that reads a PDF (given file access, it improvises with whatever shell tools the machine has), so it receives the text layer in the prompt, and the image-only copy ends as `error`. It runs `gpt-6.1-sol` unless `--model` names another model.
 - **Not the same as an API call.** Both CLIs still add their own prompt around ours (about 2,000 tokens for Claude Code and 7,000 for Codex when measured), and that prompt changes between CLI versions. Each saved result records `cli_version`; compare a run only with a baseline from the same provider, and expect a shift after a CLI update.
 - **Terms.** These providers start the CLI you installed and signed in to yourself and never read its credentials. Whether scripted use fits your plan is between you and the vendor; check their current terms before relying on it.
 
