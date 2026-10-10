@@ -11,6 +11,9 @@ Open **Coding manual** and choose **Manual editing**. Give each field a clear na
 Descriptions should be relative to your [effect definition](analysis.md). For instance, a publication-status field could allow “Published” and “Unpublished,” while a numerical field could record the number of participants contributing to that effect.
 
 Every extraction request sends the model the analysis description, the effect definition, each field’s name, type and description, and each level with its description. Write them as instructions another coder could follow. Level descriptions matter most when level values are short codes such as `1` and `2`. The model must choose exactly one level per field; if several seem to apply, it picks the best fit and explains in the `notes` field.
+
+You do not need a level or a special number for missing information. For every field, the model can answer that the value is not reported, not applicable, or unclear, and the export [shows which](results.md#missing-values). Use field descriptions to say when a field does not apply, for example “only for studies with a follow-up.”
+
 Field names must be unique, ignoring capitalization and surrounding spaces. MetaCoder already adds `row_id`, `source_pdf`, `locator`, `authors`, `year`, and `status` to every export, so a field cannot use one of those names in any capitalization — use a more specific name such as `publication_year` or `publication_status`.
 
 Choose **Validate and save** when the fields and effect definition are ready. Fix any validation messages before continuing.

@@ -87,7 +87,10 @@ def test_invalid_response_envelope(parsed, message):
     ('number', 10 ** 400, True),
 ])
 def test_response_values_enforce_manual_types(kind, value, valid):
-    parsed = {'effects': [{'row_id': 'r1', 'field': {'value': value, 'evidence': 'p. 1'}}]}
+    field = {'value': value, 'evidence': 'p. 1'}
+    if value is None:
+        field['missing'] = 'not_reported'
+    parsed = {'effects': [{'row_id': 'r1', 'field': field}]}
     result = mechanism.validate_response(parsed, {'r1'}, {'field': manual.FieldSpec(type=kind)})
     assert result.ok is valid
     if not valid:
