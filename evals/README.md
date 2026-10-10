@@ -47,6 +47,21 @@ python evals/run_eval.py replay evals/runs/my-run
 
 `run` reads the key from `GEMINI_API_KEY`, `OPENROUTER_API_KEY` or `OPENAI_COMPATIBLE_API_KEY` (with `--base-url`). It keeps PDFs that already have a saved result, so a run stopped by a provider error can be repeated to finish it; `--force` recodes everything. Results go to `evals/runs/`, which is not committed.
 
+### With a Claude or ChatGPT plan instead of an API key
+
+```sh
+python evals/run_eval.py run --set small --provider claude_cli --name my-claude-run
+python evals/run_eval.py run --set small --provider codex_cli --model MODEL --name my-codex-run
+```
+
+`claude_cli` runs the installed Claude Code CLI (`claude -p`) and `codex_cli` runs the Codex CLI (`codex exec`). Each uses the plan its CLI is signed in to, so no API key is needed. The prompt, schema, validation and quote check are the same as for the other providers. The approach follows [coarse](https://github.com/Davidvandijcke/coarse), which runs its paper reviews through the same CLIs.
+
+- **Isolation.** Every PDF is coded in an empty temporary folder, with the CLI's MCP servers, user configuration, project instructions and session saving turned off. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and related variables are removed for the call, because with one of them set the CLI bills an API account instead of the plan.
+- **Claude Code** gets our own short system prompt and one tool, Read, limited to a folder that holds only the PDF. It reads the article itself, so the image-only copy can be coded too.
+- **Codex** gets our own short instructions and no tools. It cannot take a PDF, so it receives the text layer in the prompt, and the image-only copy ends as `error`. Without `--model` it uses the CLI's default model, which the result then does not name.
+- **Not the same as an API call.** Both CLIs still add their own prompt around ours (about 2,000 tokens for Claude Code and 7,000 for Codex when measured), and that prompt changes between CLI versions. Each saved result records `cli_version`; compare a run only with a baseline from the same provider, and expect a shift after a CLI update.
+- **Terms.** These providers start the CLI you installed and signed in to yourself and never read its credentials. Whether scripted use fits your plan is between you and the vendor; check their current terms before relying on it.
+
 A run counts as a regression when accuracy falls more than 5 percentage points below the baseline or more PDFs end as `needs_review` or `error`. Model output varies between runs, so smaller changes are reported but do not fail.
 
 `tests/test_eval_set.py` checks the files against each other and replays the committed baseline, so the normal test suite catches a change to validation or quote matching that alters its scores.

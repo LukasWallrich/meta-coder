@@ -11,7 +11,9 @@ re-validates and re-checks the saved raw responses with the current code, with
 no API call, so changes to validation or quote matching can be checked for free.
 
 API keys are read from GEMINI_API_KEY, OPENROUTER_API_KEY or, for an
-OpenAI-compatible endpoint, OPENAI_COMPATIBLE_API_KEY with --base-url.
+OpenAI-compatible endpoint, OPENAI_COMPATIBLE_API_KEY with --base-url. The
+providers claude_cli and codex_cli need no key: they run the signed-in Claude
+Code or Codex CLI, see `cli_providers.py`.
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ from meta_coder.mechanism import validate_response  # noqa: E402
 from meta_coder.prompts import PROMPT_VERSION  # noqa: E402
 from meta_coder.providers import default_model, extract_pdf_effects  # noqa: E402
 from meta_coder.quote_check import annotate_quote_checks  # noqa: E402
+
+import cli_providers  # noqa: E402
 
 KEY_ENV = {
     "gemini": "GEMINI_API_KEY",
@@ -209,11 +213,16 @@ def finish(run_dir: Path, results: dict[str, dict], baseline: Path | None) -> in
 
 
 def command_run(args: argparse.Namespace) -> int:
-    api_key = os.environ.get(KEY_ENV[args.provider], "")
-    if not api_key and args.provider != "openai_compatible":
+    uses_cli = args.provider in cli_providers.PROVIDERS
+    api_key = "" if uses_cli else os.environ.get(KEY_ENV[args.provider], "")
+    if not api_key and not uses_cli and args.provider != "openai_compatible":
         raise SystemExit(f"Set {KEY_ENV[args.provider]} to run with {args.provider}.")
     manual = read_coding_manual(ROOT / "manual.yml")
-    model = args.model or default_model(args.provider)
+    if uses_cli:
+        model = args.model or cli_providers.DEFAULT_MODELS[args.provider]
+        version = cli_providers.cli_version(args.provider)
+    else:
+        model = args.model or default_model(args.provider)
     run_dir = ROOT / "runs" / args.name
     run_dir.mkdir(parents=True, exist_ok=True)
     results = {}
@@ -226,10 +235,15 @@ def command_run(args: argparse.Namespace) -> int:
                 results[source_pdf] = data
                 print(f"{source_pdf}: {data['status']} (saved)", flush=True)
                 continue
-        result = extract_pdf_effects(
-            provider=args.provider, pdf_path=ROOT / "pdfs" / source_pdf, manual=manual, rows=rows,
-            api_key=api_key, model=model, base_url=args.base_url,
-        )
+        if uses_cli:
+            result = cli_providers.extract_pdf_effects(
+                provider=args.provider, pdf_path=ROOT / "pdfs" / source_pdf, manual=manual, rows=rows, model=model,
+            )
+        else:
+            result = extract_pdf_effects(
+                provider=args.provider, pdf_path=ROOT / "pdfs" / source_pdf, manual=manual, rows=rows,
+                api_key=api_key, model=model, base_url=args.base_url,
+            )
         data = {
             "source_pdf": source_pdf, "provider": args.provider, "model": model,
             "prompt_version": PROMPT_VERSION, "status": result.status, "error": result.error,
@@ -237,6 +251,8 @@ def command_run(args: argparse.Namespace) -> int:
             "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
             "duration_sec": round(result.duration_sec, 1),
         }
+        if uses_cli:
+            data["cli_version"] = version
         saved.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         results[source_pdf] = data
         print(f"{source_pdf}: {result.status}" + (f" ({result.error})" if result.error else ""), flush=True)
@@ -275,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="code a set with a provider, then score it")
     run.add_argument("--set", default="small", choices=["small", "broad"])
-    run.add_argument("--provider", default="gemini", choices=sorted(KEY_ENV))
+    run.add_argument("--provider", default="gemini", choices=sorted((*KEY_ENV, *cli_providers.PROVIDERS)))
     run.add_argument("--model", default="")
     run.add_argument("--base-url", default="")
     run.add_argument("--name", required=True, help="folder name under evals/runs/")
