@@ -68,6 +68,9 @@
 <p>Results coded before these three reasons existed show <code>Not Reported</code> for every missing value.</p>
 <h2 id="fields-with-several-categories">Fields with several categories<a class="headerlink" href="#fields-with-several-categories" title="Permanent link">&para;</a></h2>
 <p>For a field that <a href="../manual/#fields-where-several-categories-apply">allows several categories</a>, the cell in <code>coded_data.csv</code> lists every selected category, separated by <code>;</code> and in the order the manual defines them, for example <code>survey; interview</code>. Split the cell on <code>;</code> to analyse the categories separately. If no category applies, the cell holds one of the <a href="#missing-values">missing-value texts</a>.</p>
+<h2 id="confidence-ratings">Confidence ratings<a class="headerlink" href="#confidence-ratings" title="Permanent link">&para;</a></h2>
+<p>If the manual <a href="../manual/#confidence-ratings">asks for confidence ratings</a>, <strong>Results</strong> offers <code>confidence.csv</code>. It has the same rows and columns as <code>coded_data.csv</code>, with each coded cell replaced by <code>high</code>, <code>medium</code> or <code>low</code>. A rating on a missing value says how sure the model is of the reason, for example that the value really is not reported. The <code>notes</code> column is blank, as are rows that have not been coded.</p>
+<p>Cells rated <code>low</code> are added to each PDF's <strong>cells to check</strong> count, together with <code>Unclear</code> cells. As with <code>Unclear</code>, a low rating does not change a PDF's status or cause it to be recoded.</p>
 <h2 id="download-the-data">Download the data<a class="headerlink" href="#download-the-data" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -84,6 +87,10 @@
 <tr>
 <td><code>evidence.csv</code></td>
 <td>Supporting page and quote information for the coded cells</td>
+</tr>
+<tr>
+<td><code>confidence.csv</code></td>
+<td>The model's confidence in each coded cell, when the manual asks for it</td>
 </tr>
 <tr>
 <td>Per-PDF YAML</td>
@@ -104,7 +111,7 @@
         <a href="../auditing/"><small>Next</small>Audit and reproducibility →</a>
       </nav>
     </main>
-    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#review-each-study">Review each study</a><a href="#missing-values">Missing values</a><a href="#fields-with-several-categories">Fields with several categories</a><a href="#download-the-data">Download the data</a><a href="#preserve-a-run">Preserve a run</a></nav></aside>
+    <aside class="docs-toc"><nav aria-label="On this page"><p>On this page</p><a href="#review-each-study">Review each study</a><a href="#missing-values">Missing values</a><a href="#fields-with-several-categories">Fields with several categories</a><a href="#confidence-ratings">Confidence ratings</a><a href="#download-the-data">Download the data</a><a href="#preserve-a-run">Preserve a run</a></nav></aside>
   </div>
 </body>
 </html>

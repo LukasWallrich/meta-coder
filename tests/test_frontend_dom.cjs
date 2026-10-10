@@ -715,3 +715,29 @@ for (const preference of ['system', 'light', 'dark', 'invalid', null, 'storage-e
     });
   }
 }
+
+test('manual confidence checkbox reflects the editor data and submits its setting', t => {
+  const { w, d } = setup(t, 'project', w => {
+    w.document.getElementById('manual-editor-data').textContent = JSON.stringify({ effects: [], confidence: true });
+  });
+  const checkbox = d.getElementById('manual-confidence');
+  assert.equal(checkbox.checked, true);
+  const form = d.getElementById('manual-form');
+  form.addEventListener('submit', e => e.preventDefault());
+  checkbox.checked = false;
+  checkbox.dispatchEvent(new w.Event('change', { bubbles: true }));
+  submit(w, form);
+  assert.equal(JSON.parse(d.getElementById('manual-json-input').value).confidence, false);
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new w.Event('change', { bubbles: true }));
+  submit(w, form);
+  assert.equal(JSON.parse(d.getElementById('manual-json-input').value).confidence, true);
+
+  const sparse = setup(t, 'project', w => {
+    w.document.getElementById('manual-editor-data').textContent = JSON.stringify({ effects: [] });
+  });
+  assert.equal(sparse.d.getElementById('manual-confidence').checked, false);
+  sparse.d.getElementById('manual-form').addEventListener('submit', e => e.preventDefault());
+  submit(sparse.w, sparse.d.getElementById('manual-form'));
+  assert.equal(JSON.parse(sparse.d.getElementById('manual-json-input').value).confidence, false);
+});

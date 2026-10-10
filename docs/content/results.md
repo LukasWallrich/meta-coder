@@ -32,12 +32,19 @@ Results coded before these three reasons existed show `Not Reported` for every m
 
 For a field that [allows several categories](manual.md#fields-where-several-categories-apply), the cell in `coded_data.csv` lists every selected category, separated by `; ` and in the order the manual defines them, for example `survey; interview`. Split the cell on `; ` to analyse the categories separately. If no category applies, the cell holds one of the [missing-value texts](#missing-values).
 
+## Confidence ratings
+
+If the manual [asks for confidence ratings](manual.md#confidence-ratings), **Results** offers `confidence.csv`. It has the same rows and columns as `coded_data.csv`, with each coded cell replaced by `high`, `medium` or `low`. A rating on a missing value says how sure the model is of the reason, for example that the value really is not reported. The `notes` column is blank, as are rows that have not been coded.
+
+Cells rated `low` are added to each PDF's **cells to check** count, together with `Unclear` cells. As with `Unclear`, a low rating does not change a PDF's status or cause it to be recoded.
+
 ## Download the data
 
 | Export | Purpose |
 | --- | --- |
 | `coded_data.csv` | Coded values arranged by effect row |
 | `evidence.csv` | Supporting page and quote information for the coded cells |
+| `confidence.csv` | The model's confidence in each coded cell, when the manual asks for it |
 | Per-PDF YAML | Readable coded effects and evidence for a single study |
 | Audit ZIP | Complete project export with persistent request/response history, provenance, and checksums |
 

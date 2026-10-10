@@ -16,6 +16,18 @@ You do not need a level or a special number for missing information. For every f
 
 Field names must be unique, ignoring capitalization and surrounding spaces. MetaCoder already adds `row_id`, `source_pdf`, `locator`, `authors`, `year`, and `status` to every export, so a field cannot use one of those names in any capitalization — use a more specific name such as `publication_year` or `publication_status`.
 
+### Confidence ratings
+
+Tick **Ask the model how confident it is in each coded value** to get a rating of high, medium or low for every field. In YAML, add `confidence: true` at the top level, next to `name`. It is off unless you turn it on, and like any other change to the manual, switching it clears earlier results.
+
+| Rating | What the model is told it means |
+| --- | --- |
+| high | The article states the value explicitly and unambiguously. |
+| medium | The value takes some interpretation, or combining information from different places in the article. |
+| low | The value is inferred or approximate, or the article is ambiguous or inconsistent about it. |
+
+The ratings are [exported in their own file](results.md#confidence-ratings). They are the model's own judgement and are not calibrated probabilities: use them to decide which cells to check first, not as a measure of accuracy. Turning ratings on makes each response slightly longer.
+
 Choose **Validate and save** when the fields and effect definition are ready. Fix any validation messages before continuing.
 
 ## Draft from a document
