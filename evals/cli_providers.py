@@ -11,11 +11,15 @@ session saving turned off, and with API keys removed from the environment so
 the CLI cannot switch to metered billing. Unlike coarse, the schema is passed
 through each CLI's own structured-output option rather than in the prompt.
 
-- Claude Code gets one tool, Read, confined to a directory that holds only the
-  PDF, so it reads the article itself (scanned PDFs included).
-- Codex has no tool that reads a PDF: with file access it improvises with
-  whatever shell tools the machine has. So it gets the text layer in the
-  prompt and no tools, and a PDF without a text layer ends as an error.
+Each CLI gets the article the way its vendor's API would take a PDF, and no
+tools:
+
+- Claude Code gets the PDF itself, as a document block in a `stream-json`
+  input message. That is the block the Claude API uses for PDFs.
+- Codex accepts images but no PDF. An API that takes a PDF gives the model
+  each page's text and an image of the page, so Codex gets the text layer in
+  the prompt (when the PDF has one) and the pages as images, rendered with
+  poppler's `pdftoppm`.
 
 Both CLIs add their own prompt around ours, and that prompt changes between
 CLI versions, so each result records the version that produced it.
@@ -23,9 +27,9 @@ CLI versions, so each result records the version that produced it.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -60,14 +64,16 @@ HOST_ENV = (
     "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID",
 )
 
-ARTICLE_NAME = "article.pdf"
+PAGE_IMAGE_DPI = 150
+TEXT_LAYER_HEADING = "\n\nText layer of the article (the pages show the same content with its layout):\n"
 CLAUDE_SYSTEM_PROMPT = (
-    "You code research articles for a meta-analysis. Read article.pdf in full "
-    "with the Read tool, then return only the requested structured output."
+    "You code research articles for a meta-analysis. Work only from the "
+    "attached PDF and return only the requested structured output."
 )
 CODEX_INSTRUCTIONS = (
     "You code research articles for a meta-analysis. Work only from the "
-    "article text in the message and return only the requested JSON."
+    "attached page images and the article text in the message, and return "
+    "only the requested JSON."
 )
 CODEX_OVERRIDES = (
     "approval_policy='never'",
@@ -99,6 +105,33 @@ def cli_version(provider: str) -> str:
     return done.stdout.strip()
 
 
+def _text_layer(pdf_path: Path) -> str:
+    """The article section of the prompt; empty for a PDF without a text layer."""
+
+    try:
+        return TEXT_LAYER_HEADING + pdf_text(pdf_path, None)
+    except ProviderError:
+        return ""
+
+
+def _page_images(pdf_path: Path, workspace: Path) -> list[Path]:
+    try:
+        done = subprocess.run(
+            ["pdftoppm", "-r", str(PAGE_IMAGE_DPI), "-jpeg", str(pdf_path), "page"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, cwd=workspace,
+        )
+    except FileNotFoundError as exc:
+        raise ProviderError(
+            "codex_cli needs `pdftoppm` (part of poppler) on PATH to turn PDF pages into images."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ProviderError("`pdftoppm` did not finish rendering the PDF.") from exc
+    pages = sorted(workspace.glob("page-*.jpg"))
+    if done.returncode != 0 or not pages:
+        raise ProviderError(f"`pdftoppm` could not render the PDF: {done.stderr.strip()[-300:]}")
+    return pages
+
+
 def _run(command: list[str], prompt: str, workspace: Path) -> str:
     name = command[0]
     try:
@@ -122,20 +155,31 @@ def _run(command: list[str], prompt: str, workspace: Path) -> str:
 def _call_claude(
     pdf_path: Path, prompt: str, schema: dict, model: str, workspace: Path,
 ) -> tuple[str, dict[str, int | None]]:
-    shutil.copyfile(pdf_path, workspace / ARTICLE_NAME)
+    message = {"type": "user", "message": {"role": "user", "content": [
+        {"type": "document", "source": {
+            "type": "base64", "media_type": "application/pdf",
+            "data": base64.b64encode(pdf_path.read_bytes()).decode("ascii"),
+        }},
+        {"type": "text", "text": prompt},
+    ]}}
     stdout = _run([
-        "claude", "-p", "--safe-mode", "--restricted", "--disable-slash-commands",
+        "claude", "-p", "--safe-mode", "--disable-slash-commands",
         "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-        "--tools", "Read", "--allowedTools", "Read", "--no-session-persistence",
+        "--tools", "", "--no-session-persistence",
         "--system-prompt", CLAUDE_SYSTEM_PROMPT, "--model", model,
-        "--output-format", "json", "--json-schema", json.dumps(schema),
-    ], prompt, workspace)
-    try:
-        reply = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise ProviderError("`claude` did not return JSON.", raw_response=stdout) from exc
-    if not isinstance(reply, dict) or reply.get("is_error") or reply.get("structured_output") is None:
-        raise ProviderError("`claude` returned no structured output.", raw_response=stdout)
+        "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--json-schema", json.dumps(schema),
+    ], json.dumps(message) + "\n", workspace)
+    reply = None
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            reply = event
+    if reply is None or reply.get("is_error") or reply.get("structured_output") is None:
+        raise ProviderError("`claude` returned no structured output.", raw_response=stdout[-2000:])
     usage = reply.get("usage") or {}
     read = [usage.get(key) for key in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
     tokens = {
@@ -148,7 +192,8 @@ def _call_claude(
 def _call_codex(
     pdf_path: Path, prompt: str, schema: dict, model: str, workspace: Path,
 ) -> tuple[str, dict[str, int | None]]:
-    prompt = prompt + "\n\nArticle text:\n" + pdf_text(pdf_path, None)
+    prompt = prompt + _text_layer(pdf_path)
+    pages = _page_images(pdf_path, workspace)
     (workspace / "schema.json").write_text(json.dumps(schema), encoding="utf-8")
     (workspace / "instructions.md").write_text(CODEX_INSTRUCTIONS, encoding="utf-8")
     command = [
@@ -157,6 +202,8 @@ def _call_codex(
     ]
     for override in (*CODEX_OVERRIDES, "model_instructions_file='instructions.md'"):
         command += ["-c", override]
+    for page in pages:
+        command += ["--image", page.name]
     command += ["--output-schema", "schema.json", "--output-last-message", "reply.json", "--json", "-"]
     events = _run(command, prompt, workspace)
     reply = workspace / "reply.json"
@@ -188,15 +235,12 @@ def extract_pdf_effects(
     try:
         with tempfile.TemporaryDirectory(prefix="meta-coder-eval-") as folder:
             if provider == "claude_cli":
-                article = f"the PDF file {ARTICLE_NAME} in the current directory"
-                raw_text, tokens = _call_claude(
-                    pdf_path, build_extraction_prompt(manual, rows, article=article), schema, model, Path(folder),
-                )
+                call, article = _call_claude, "attached PDF"
             else:
-                raw_text, tokens = _call_codex(
-                    pdf_path, build_extraction_prompt(manual, rows, article="article text below"),
-                    schema, model, Path(folder),
-                )
+                call, article = _call_codex, "the attached images, one per page of the article"
+            raw_text, tokens = call(
+                pdf_path, build_extraction_prompt(manual, rows, article=article), schema, model, Path(folder),
+            )
         parsed, repaired = parse_json_response(raw_text)
     except ProviderError as exc:
         return ExtractionResult(

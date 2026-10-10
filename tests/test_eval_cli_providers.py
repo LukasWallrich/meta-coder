@@ -2,6 +2,7 @@
 a fake `subprocess.run`, so no CLI is started and no network is used. The
 saved Kearney response stands in for what the CLIs return."""
 
+import base64
 import json
 import os
 import shutil
@@ -51,10 +52,11 @@ def _fake_run(monkeypatch, respond):
 
 
 def _claude_stdout(structured=None, usage=USAGE):
-    body = {"is_error": False, "structured_output": _baseline_response() if structured is None else structured}
+    body = {"type": "result", "is_error": False,
+            "structured_output": _baseline_response() if structured is None else structured}
     if usage is not None:
         body["usage"] = usage
-    return json.dumps(body)
+    return "\n".join([json.dumps({"type": "system"}), "this line is not JSON", json.dumps(body)])
 
 
 def _codex_events(usage=None):
@@ -87,7 +89,7 @@ def test_cli_version_is_empty_when_the_cli_cannot_run(monkeypatch):
     assert cli_providers.cli_version("codex_cli") == ""
 
 
-def test_claude_cli_codes_the_pdf_in_an_empty_folder_with_read_only_tools(monkeypatch, manual, kearney):
+def test_claude_cli_sends_the_pdf_as_a_document_block_with_no_tools(monkeypatch, manual, kearney):
     pdf, rows = kearney
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     seen = {}
@@ -111,21 +113,25 @@ def test_claude_cli_codes_the_pdf_in_an_empty_folder_with_read_only_tools(monkey
 
     command = seen["command"]
     assert command[:2] == ["claude", "-p"]
-    assert command[command.index("--tools") + 1] == "Read"
+    assert command[command.index("--tools") + 1] == ""
+    assert command[command.index("--input-format") + 1] == "stream-json"
     assert "--system-prompt" in command
     assert "--json-schema" in command
-    assert seen["files"] == ["article.pdf"]
+    assert seen["files"] == []
     assert "ANTHROPIC_API_KEY" not in seen["env"]
-    assert "article.pdf" in seen["input"]
+    document, text = json.loads(seen["input"])["message"]["content"]
+    assert document["type"] == "document"
+    assert base64.b64decode(document["source"]["data"]) == pdf.read_bytes()
+    assert "attached PDF" in text["text"]
 
 
 @pytest.mark.parametrize(("reply", "expected"), [
     (subprocess.CompletedProcess(["claude"], 1, "", "boom: not signed in"), "not signed in"),
-    (subprocess.CompletedProcess(["claude"], 0, "<html>not json</html>", ""), "did not return JSON"),
+    (subprocess.CompletedProcess(["claude"], 0, "<html>not json</html>", ""), "returned no structured output"),
     (subprocess.CompletedProcess(["claude"], 0, json.dumps(
-        {"is_error": True, "structured_output": _baseline_response(), "usage": USAGE}), ""),
+        {"type": "result", "is_error": True, "structured_output": _baseline_response(), "usage": USAGE}), ""),
      "returned no structured output"),
-    (subprocess.CompletedProcess(["claude"], 0, json.dumps({"is_error": False, "usage": USAGE}), ""),
+    (subprocess.CompletedProcess(["claude"], 0, json.dumps({"type": "result", "is_error": False, "usage": USAGE}), ""),
      "returned no structured output"),
     (FileNotFoundError("claude"), "not installed or not on PATH"),
     (subprocess.TimeoutExpired(["claude"], 900), "did not finish within"),
@@ -164,11 +170,16 @@ def test_claude_cli_response_missing_a_requested_row_needs_review(monkeypatch, m
     assert dropped in result.missing_ids
 
 
-def _codex_run(monkeypatch, manual, rows, pdf, model="", write_reply=True):
+def _codex_run(monkeypatch, manual, rows, pdf, model="", write_reply=True, pages=2):
     seen = {}
 
     def respond(command, kwargs):
         workspace = Path(kwargs["cwd"])
+        if command[0] == "pdftoppm":
+            seen["pdftoppm"] = command
+            for number in range(1, pages + 1):
+                (workspace / f"page-{number}.jpg").write_bytes(b"jpeg")
+            return subprocess.CompletedProcess(command, 0, "", "no pages" if not pages else "")
         seen["command"] = command
         seen["files"] = sorted(path.name for path in workspace.iterdir())
         seen["input"] = kwargs["input"]
@@ -197,7 +208,9 @@ def test_codex_cli_reads_the_reply_file_and_counts_tokens(monkeypatch, manual, k
     overrides = [command[i + 1] for i, part in enumerate(command) if part == "-c"]
     assert "model_instructions_file='instructions.md'" in overrides
     assert {"schema.json", "instructions.md"} <= set(seen["files"])
-    assert "Article text:" in seen["input"]
+    assert seen["pdftoppm"][:4] == ["pdftoppm", "-r", "150", "-jpeg"]
+    assert [command[i + 1] for i, part in enumerate(command) if part == "--image"] == ["page-1.jpg", "page-2.jpg"]
+    assert "Text layer of the article" in seen["input"]
 
 
 def test_codex_cli_always_names_a_model(monkeypatch, manual, kearney):
@@ -219,14 +232,32 @@ def test_codex_cli_without_a_reply_file_is_an_error(monkeypatch, manual, kearney
     assert "returned no final message" in result.error
 
 
-def test_codex_cli_refuses_a_pdf_without_a_text_layer_before_running_codex(monkeypatch, manual):
+def test_codex_cli_sends_only_page_images_for_a_pdf_without_a_text_layer(monkeypatch, manual):
     pdf = EVALS / "pdfs" / "xia_2022_scanned.pdf"
     rows = run_eval.rows_by_pdf("small")["xia_2022_scanned.pdf"]
-    calls = _fake_run(monkeypatch, lambda command, kwargs: pytest.fail("codex must not run"))
+    _, seen = _codex_run(monkeypatch, manual, rows, pdf)
+    assert "--image" in seen["command"]
+    assert "Text layer of the article" not in seen["input"]
+
+
+def test_codex_cli_is_an_error_when_no_page_image_is_rendered(monkeypatch, manual, kearney):
+    pdf, rows = kearney
+    result, seen = _codex_run(monkeypatch, manual, rows, pdf, pages=0)
+    assert result.status == "error"
+    assert "could not render" in result.error
+    assert "command" not in seen
+
+
+def test_codex_cli_is_an_error_without_pdftoppm(monkeypatch, manual, kearney):
+    pdf, rows = kearney
+
+    def respond(command, kwargs):
+        raise FileNotFoundError(command[0])
+
+    _fake_run(monkeypatch, respond)
     result = cli_providers.extract_pdf_effects(provider="codex_cli", pdf_path=pdf, manual=manual, rows=rows)
     assert result.status == "error"
-    assert "no extractable text" in result.error
-    assert calls == []
+    assert "poppler" in result.error
 
 
 def test_unknown_provider_is_a_value_error(manual, kearney):
