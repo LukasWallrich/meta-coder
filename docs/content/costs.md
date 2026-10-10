@@ -24,8 +24,6 @@ OpenRouter also charges for its own PDF conversion when a model lacks native fil
 3. Multiply the average per PDF by the number of PDFs and apply your provider's current prices. Add a margin for retries and re-runs.
 4. Compare the estimate with your provider's billing or usage page, which shows the actual charge.
 
-For Gemini, the **Output tokens** column shows the answer only. Reasoning tokens are billed as output but reported separately as `thoughtsTokenCount` in the raw response, so check your Google billing page or the raw response for the full figure.
-
 ## Example
 
 The following example uses prices checked on 10 October 2026 from the [Gemini API pricing page](https://ai.google.dev/gemini-api/docs/pricing). Prices change; Google lists higher rates from 1 January 2027 for these models.

@@ -54,7 +54,6 @@
 <li>Multiply the average per PDF by the number of PDFs and apply your provider's current prices. Add a margin for retries and re-runs.</li>
 <li>Compare the estimate with your provider's billing or usage page, which shows the actual charge.</li>
 </ol>
-<p>For Gemini, the <strong>Output tokens</strong> column shows the answer only. Reasoning tokens are billed as output but reported separately as <code>thoughtsTokenCount</code> in the raw response, so check your Google billing page or the raw response for the full figure.</p>
 <h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
 <p>The following example uses prices checked on 10 October 2026 from the <a href="https://ai.google.dev/gemini-api/docs/pricing">Gemini API pricing page</a>. Prices change; Google lists higher rates from 1 January 2027 for these models.</p>
 <p>Gemini 3.8 Flash on the Flex tier was listed at US $0.375 per million input tokens and US $1.875 per million output tokens. Google's <a href="https://ai.google.dev/gemini-api/docs/document-processing">document understanding guide</a> counts each PDF page as 258 tokens for Gemini 3 models. A 20-page article with a 2,000-token prompt is therefore about 7,000 input tokens. With 3,000 output tokens including reasoning, one request costs about US $0.008, and 200 such articles about US $1.65 before retries.</p>
