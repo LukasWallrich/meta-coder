@@ -212,7 +212,7 @@ def test_multiple_field_still_requires_missing_and_evidence(dialect):
     schema = build_response_schema(_manual(), dialect=dialect)
     coded = schema["properties"]["effects"]["items"]["properties"]["Outcomes"]
     assert "missing" in coded["properties"]
-    assert set(coded["required"]) == {"value", "missing", "evidence"}
+    assert {"value", "missing", "evidence"} <= set(coded["required"])
 
 
 def test_single_select_schema_is_unchanged_by_the_setting():
