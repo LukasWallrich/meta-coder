@@ -404,3 +404,43 @@ def test_model_warning_preserves_saved_settings(site, monkeypatch):
     response = client.post(url(project, '/settings'), data={'provider': 'gemini', 'previous_provider': 'gemini', 'model': 'model'})
     assert response.status_code == 303 and 'warning=' in response.headers['location']
     assert load_run_settings(project).model == 'model'
+
+
+def test_model_check_runs_outside_request_event_loop(site, monkeypatch):
+    import threading
+    client, project, runtime = site
+    ready_project(project, runtime)
+    @client.app.get('/thread-id')
+    async def thread_id():
+        return threading.get_ident()
+    event_thread = client.get('/thread-id').json()
+    threads = []
+    monkeypatch.setattr(web, 'check_model', lambda *a, **k: threads.append(threading.get_ident()) or [])
+    assert client.post(url(project, '/settings'), data={'provider': 'gemini', 'previous_provider': 'gemini', 'model': 'model'}).status_code == 303
+    assert threads and threads[0] != event_thread
+
+
+def test_failed_zip_creation_cleans_up_temp_file(site, monkeypatch, tmp_path):
+    client, project, _ = site
+    temporary = tmp_path / 'failed.zip'
+    real_temporary = web.tempfile.NamedTemporaryFile
+    monkeypatch.setattr(web.tempfile, 'NamedTemporaryFile', lambda **kwargs: real_temporary(dir=tmp_path, prefix='export-', **kwargs))
+    monkeypatch.setattr(web, 'project_archive_files', lambda _: [(temporary, 'missing')])
+    with pytest.raises(FileNotFoundError):
+        client.get(url(project, '/download/zip'))
+    assert not list(tmp_path.glob('export-*.zip'))
+
+
+@pytest.mark.parametrize(('method', 'suffix', 'data'), [
+    ('get', '/status', None), ('get', '/pdf-scan/status', None),
+    ('get', '/download/zip', None), ('get', '/download/coded', None),
+    ('get', '/download/evidence', None), ('get', '/raw/missing.json', None),
+    ('post', '/clear-output', None), ('post', '/manual/reset', None),
+    ('post', '/run/cancel', None), ('post', '/open-folder', None),
+])
+def test_missing_projects_return_404_across_routes(site, method, suffix, data):
+    client, project, _ = site
+    from meta_coder.projects import delete_project
+    delete_project(project)
+    response = client.request(method, url(project, suffix), data=data)
+    assert response.status_code == 404
