@@ -1,9 +1,11 @@
 """Verify provenance at the actual provider wire boundary, including failures."""
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
 import json
 import threading
 import time
+import traceback
 from urllib.error import HTTPError, URLError
 from unittest.mock import Mock
 import zipfile
@@ -15,7 +17,7 @@ from meta_coder import gemini, openrouter, openai_compatible, provenance, provid
 from meta_coder.coding_sheet import CodingSheet, CodingSheetRow
 from meta_coder.extraction import ExtractionResult, ProviderError, ResponseBytes
 from meta_coder.manual import parse_coding_manual
-from meta_coder.projects import clear_output, create_project, write_manual
+from meta_coder.projects import clear_output, create_project, project_archive_files, write_manual
 
 
 @pytest.fixture
@@ -40,6 +42,23 @@ def blob(project, ref):
     data = (project.path / ref['path']).read_bytes()
     assert hashlib.sha256(data).hexdigest() == ref['sha256']
     return data
+
+
+def test_audit_json_paths_and_unsupported_values(tmp_path):
+    assert json.loads(provenance.json_bytes({'path': tmp_path})) == {'path': str(tmp_path)}
+    with pytest.raises(TypeError, match='Unsupported audit value: object'):
+        provenance.json_bytes(object())
+
+
+def test_export_excludes_unpublished_audit_temporary_files(project):
+    pending = project.path / 'audit' / 'blobs' / 'pending.tmp'
+    pending.parent.mkdir(parents=True)
+    pending.write_bytes(b'incomplete')
+    published = pending.with_name('published')
+    published.write_bytes(b'complete')
+    exported = dict((name, path) for path, name in project_archive_files(project))
+    assert 'audit/blobs/pending.tmp' not in exported
+    assert exported['audit/blobs/published'].read_bytes() == b'complete'
 
 
 @pytest.mark.parametrize('adapter', [gemini, openrouter, openai_compatible])
@@ -203,20 +222,108 @@ def test_no_request_is_sent_if_audit_cannot_be_saved(project, monkeypatch):
     assert records(project)[0]['status'] == 'error'
 
 
-def test_parallel_operations_keep_requests_separate(project, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
+def parallel_results(call, barrier):
+    """Drain every future, including the failure that broke the barrier."""
+    def worker(index):
+        try:
+            return call(index)
+        except BaseException:
+            barrier.abort()
+            raise
+
+    results = {}
+    failures = {}
+    with ThreadPoolExecutor(max_workers=barrier.parties) as pool:
+        futures = {pool.submit(worker, index): index for index in range(barrier.parties)}
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                results[index] = future.result()
+            except BaseException as exc:
+                failures[index] = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    assert not failures, '\n'.join(
+        f'Worker {index} failed:\n{failure}' for index, failure in sorted(failures.items()))
+    return [results[index] for index in range(barrier.parties)]
+
+
+def test_parallel_results_reports_pre_barrier_failure():
     barrier = threading.Barrier(3)
-    def transport(request, **kwargs):
+    ready = threading.Barrier(3)
+
+    def call(index):
+        ready.wait(timeout=5)
+        if index == 2:
+            raise OSError('injected audit initialization failure')
         barrier.wait(timeout=5)
+
+    with pytest.raises(AssertionError) as caught:
+        parallel_results(call, barrier)
+    report = str(caught.value)
+    assert 'Worker 2 failed:' in report
+    assert 'OSError: injected audit initialization failure' in report
+    assert 'raise OSError' in report
+    assert 'Worker 0 failed:' in report
+    assert 'Worker 1 failed:' in report
+    assert 'BrokenBarrierError' in report
+
+
+def test_concurrent_identical_blobs_are_published_once(project, monkeypatch):
+    operations = [provenance.AuditOperation(project, 'test', {}) for _ in range(3)]
+    barrier = threading.Barrier(3)
+    lock = provenance._BLOB_LOCK
+
+    class PublicationLock:
+        def __enter__(self):
+            # Force all three publishers to attempt the critical section together.
+            barrier.wait(timeout=5)
+            lock.acquire()
+
+        def __exit__(self, *args):
+            lock.release()
+
+    monkeypatch.setattr(provenance, '_BLOB_LOCK', PublicationLock())
+    write = Mock(wraps=provenance.atomic_write)
+    monkeypatch.setattr(provenance, 'atomic_write', write)
+    data = b'identical concurrent audit input\x00\xff'
+    references = parallel_results(lambda index: operations[index].blob(data), barrier)
+    assert references == [references[0]] * 3
+    assert blob(project, references[0]) == data
+    write.assert_called_once()
+    assert not list((project.path / 'audit').rglob('*.tmp'))
+
+
+def test_blob_disk_failure_propagates_and_cleans_temporary_file(project, monkeypatch):
+    operation = provenance.AuditOperation(project, 'test', {})
+    data = b'new blob requiring publication'
+    with monkeypatch.context() as patch:
+        patch.setattr(provenance.os, 'replace', Mock(side_effect=PermissionError('disk denied')))
+        with pytest.raises(PermissionError, match='disk denied'):
+            operation.blob(data)
+    assert not list((project.path / 'audit').rglob('*.tmp'))
+    assert not (project.path / 'audit/blobs' / hashlib.sha256(data).hexdigest()).exists()
+    assert blob(project, operation.blob(data)) == data
+
+
+def test_parallel_operations_keep_requests_separate(project, monkeypatch):
+    barrier = threading.Barrier(3)
+    started = time.monotonic()
+    def transport(request, **kwargs):
         content = json.loads(request.data)['contents'][0]['parts'][0]['text']
+        print(f'Worker {content}: transport arrival at {time.monotonic() - started:.3f}s', flush=True)
+        barrier.wait(timeout=5)
         return json.dumps({'modelVersion': content, 'candidates': [{'content': {'parts': [{'text': content}]}}]}).encode()
     monkeypatch.setattr(gemini, 'cancellable_urlopen', transport)
     def call(index):
+        print(f'Worker {index}: before audit initialization at {time.monotonic() - started:.3f}s', flush=True)
         return provenance.audited_call(project, 'test', gemini.generate_structured_text,
             api_key='secret-api-key', model='alias', prompt=str(index), response_schema={})
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        assert list(pool.map(call, range(3))) == ['0', '1', '2']
-    for op in records(project):
+    assert parallel_results(call, barrier) == ['0', '1', '2']
+    operations = records(project)
+    assert len(operations) == 3
+    assert len({op['operation_id'] for op in operations}) == 3
+    for op in operations:
+        assert op['status'] == 'complete'
+        assert op['finished_at_utc'] is not None
         exchange = exchanges(project, op)[0]
         request = json.loads(blob(project, exchange['request']['body']))
         assert request['contents'][0]['parts'][0]['text'] == exchange['response']['reported_model']
