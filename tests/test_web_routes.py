@@ -429,3 +429,18 @@ def test_failed_zip_creation_cleans_up_temp_file(site, monkeypatch, tmp_path):
     with pytest.raises(FileNotFoundError):
         client.get(url(project, '/download/zip'))
     assert not list(tmp_path.glob('export-*.zip'))
+
+
+@pytest.mark.parametrize(('method', 'suffix', 'data'), [
+    ('get', '/status', None), ('get', '/pdf-scan/status', None),
+    ('get', '/download/zip', None), ('get', '/download/coded', None),
+    ('get', '/download/evidence', None), ('get', '/raw/missing.json', None),
+    ('post', '/clear-output', None), ('post', '/manual/reset', None),
+    ('post', '/run/cancel', None), ('post', '/open-folder', None),
+])
+def test_missing_projects_return_404_across_routes(site, method, suffix, data):
+    client, project, _ = site
+    from meta_coder.projects import delete_project
+    delete_project(project)
+    response = client.request(method, url(project, suffix), data=data)
+    assert response.status_code == 404
