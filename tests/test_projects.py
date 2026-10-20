@@ -128,6 +128,12 @@ def test_manual_validation_preserves_outputs_and_reset_recovers(tmp_path):
     assert project.raw_dir.is_dir() and project.audit_dir.is_dir()
 
 
+def test_archive_excludes_incomplete_pdf_upload(tmp_path):
+    project = create_project('Partial upload', root=tmp_path)
+    (project.sources_dir / 'paper.pdf.uploading').write_bytes(b'%PDF unfinished')
+    assert 'sources/paper.pdf.uploading' not in {name for _, name in project_archive_files(project)}
+
+
 def test_equivalent_manual_save_preserves_every_output(tmp_path):
     from meta_coder.manual import parse_coding_manual
     project = create_project('Equivalent', root=tmp_path)
