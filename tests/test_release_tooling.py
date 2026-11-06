@@ -188,3 +188,45 @@ def test_windows_launcher_matches_what_the_uninstaller_recognises():
     assert 'Contains("--manifest-path `"$AppRoot\\")' in uninstall
     run_line = re.search(r"\$_ -match '(.*)'", uninstall).group(1)
     assert re.match(run_line, lines[2].replace('$PixiPath', r'C:\Users\A B\pixi.exe'))
+
+
+def _installer_launcher(pixi, manifest):
+    # The launcher text install.ps1's Set-Content line writes, filled in.
+    install = (ROOT / 'scripts/install.ps1').read_text()
+    written = re.search(r'Set-Content -Path \$Launcher -Value "(.*)"$', install, re.M).group(1)
+    return written.replace('`"', '"').replace('`r`n', '\r\n').replace('$PixiPath', pixi).replace('$ManifestPath', manifest)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows uninstaller')
+@pytest.mark.parametrize(('body', 'removed'), [
+    ('installer', True),
+    # Written by install.ps1 before the marker line existed.
+    ('@echo off\r\n"C:\\pixi dir\\pixi.exe" run --locked --manifest-path "{app}\\1.2.3\\pyproject.toml" start %*', True),
+    ('@echo off\r\n"C:\\Python\\python.exe" -m meta_coder %*', False),
+    ('@echo off\r\nREM meta-coder launcher\r\n"C:\\pixi.exe" run --manifest-path "C:\\elsewhere\\app\\1.2.3\\pyproject.toml" start', False),
+    ('@echo off\r\nREM "C:\\pixi.exe" run --manifest-path "{app}\\1.2.3\\pyproject.toml" start', False),
+])
+def test_windows_uninstaller_recognises_only_its_own_launchers(tmp_path, body, removed):
+    local = tmp_path / 'local app data'
+    data_root = local / 'Meta-Coder'
+    app_root = data_root / 'app'
+    (app_root / '1.2.3').mkdir(parents=True)
+    project = data_root / 'projects/keep.txt'
+    project.parent.mkdir()
+    project.write_text('keep me')
+    if body == 'installer':
+        body = _installer_launcher(r'C:\Users\A B\pixi.exe', str(app_root / '1.2.3' / 'pyproject.toml'))
+    launcher = data_root / 'bin/meta-coder.cmd'
+    launcher.parent.mkdir()
+    launcher.write_bytes(body.replace('{app}', str(app_root)).encode() + b'\r\n')
+    env = {**os.environ, 'LOCALAPPDATA': str(local)}
+    # Run as the documented `irm ... | iex` does: the script text through Invoke-Expression.
+    script = str(ROOT / 'scripts/uninstall.ps1').replace("'", "''")
+    command = f"Get-Content -Raw -LiteralPath '{script}' | Invoke-Expression"
+    for _ in range(2):  # a second run after uninstalling is a harmless no-op
+        output = subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
+                                env=env, capture_output=True, text=True, check=True).stdout
+        assert launcher.exists() is not removed
+        assert ('Keeping launcher' in output) is not removed
+        assert not app_root.exists()
+        assert project.read_text() == 'keep me'
