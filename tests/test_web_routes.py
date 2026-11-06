@@ -430,7 +430,7 @@ def test_direct_sheet_bom_and_unchanged_save(site):
     text = 'row_id,source_pdf,locator,authors,year\nr1,missing.pdf,,Müller,2020\n'
     response = client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', ('\ufeff' + text).encode())})
     assert response.status_code == 303
-    assert project.coding_sheet_path.read_text() == text
+    assert project.coding_sheet_path.read_text(encoding='utf-8') == text
     output = project.raw_dir / 'result.json'
     output.write_text('valuable')
     assert client.post(url(project, '/coding-sheet'), files={'file': ('sheet.csv', text.encode())}).status_code == 303
