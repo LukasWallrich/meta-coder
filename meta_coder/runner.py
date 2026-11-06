@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .coding_sheet import CodingSheet
-from .extraction import ExtractionResult
+from .extraction import ExtractionResult, redact_secret
 from .manual import CodingManual
 from .projects import Project
 from .provenance import AuditOperation, atomic_write, audited_call, json_bytes
@@ -378,9 +378,12 @@ class Runner:
             except Exception as exc:  # noqa: BLE001 - one PDF's failure (e.g. a
                 # disk write error) must not abort the whole run and lose every
                 # other already-completed PDF's results — see collate below.
+                # Exception text can echo request details; results and
+                # progress are persisted and exported, so drop the key.
+                message = redact_secret(str(exc), api_key)
                 if result is None:
                     result = ExtractionResult(
-                        source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {exc}"
+                        source_pdf=progress.source_pdf, status="error", error=f"Unexpected error: {message}"
                     )
                     try:
                         write_raw_result(project, result, provider=provider, model=model)
@@ -389,7 +392,7 @@ class Runner:
                 else:
                     # Keep the extracted data even if publishing its raw/YAML
                     # files fails. Report that failure separately in progress.
-                    storage_error = f"Could not save extraction output: {exc}"
+                    storage_error = f"Could not save extraction output: {message}"
 
             with results_lock:
                 results_by_pdf[progress.source_pdf] = result
@@ -423,7 +426,7 @@ class Runner:
             terminal_status = "cancelled" if state.cancel_requested else "complete"
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             terminal_status = "failed"
-            state.error = str(exc)
+            state.error = redact_secret(str(exc), api_key)
         finally:
             state.finished_at = time.time()
             if state.audit_run:
