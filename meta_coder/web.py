@@ -43,7 +43,7 @@ from .pdf_matching import (
     suggest_matches_from_score_cache,
     unmatched_paper_ids,
 )
-from .extraction import ProviderError
+from .extraction import ProviderError, redact_secret
 from .manual import (
     ManualError,
     manual_from_editor_payload,
@@ -233,7 +233,10 @@ class Runtime:
         }
 
     def project(self, project_id: str) -> Project:
-        return get_project(project_id, root=self.projects_root)
+        try:
+            return get_project(project_id, root=self.projects_root)
+        except ProjectError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     def api_key(self, provider: str) -> str | None:
         return self._session_keys.get(provider)
@@ -672,27 +675,32 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         return RedirectResponse(f"/{token}/projects/{project_id}?tab=manage", status_code=303)
 
     @app.get(f"/{token}/projects/{{project_id}}/download/zip")
-    async def download_project_zip(project_id: str):
+    def download_project_zip(project_id: str):
         project = runtime.project(project_id)
         files = project_archive_files(project)
         handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
         tmp_path = Path(handle.name)
         handle.close()
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as archive:
-            checksums = {}
-            for abs_path, arcname in files:
-                digest = hashlib.sha256()
-                size = 0
-                with abs_path.open("rb") as source, archive.open(arcname, "w", force_zip64=True) as destination:
-                    while chunk := source.read(1024 * 1024):
-                        destination.write(chunk)
-                        digest.update(chunk)
-                        size += len(chunk)
-                checksums[arcname] = {"sha256": digest.hexdigest(), "bytes": size}
-            settings_content = json_bytes(load_run_settings(project))
-            archive.writestr("run_settings.json", settings_content)
-            checksums["run_settings.json"] = {"sha256": hashlib.sha256(settings_content).hexdigest(), "bytes": len(settings_content)}
-            archive.writestr("export_manifest.json", json_bytes(export_manifest(project, checksums)))
+        try:
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                checksums = {}
+                for abs_path, arcname in files:
+                    digest = hashlib.sha256()
+                    size = 0
+                    with abs_path.open("rb") as source, archive.open(arcname, "w", force_zip64=True) as destination:
+                        while chunk := source.read(1024 * 1024):
+                            destination.write(chunk)
+                            digest.update(chunk)
+                            size += len(chunk)
+                    checksums[arcname] = {"sha256": digest.hexdigest(), "bytes": size}
+                settings_content = json_bytes(load_run_settings(project))
+                archive.writestr("run_settings.json", settings_content)
+                checksums["run_settings.json"] = {"sha256": hashlib.sha256(settings_content).hexdigest(), "bytes": len(settings_content)}
+                archive.writestr("export_manifest.json", json_bytes(export_manifest(project, checksums)))
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
         return FileResponse(
             tmp_path,
             media_type="application/zip",
@@ -854,7 +862,7 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
             reasoning_effort=reasoning_effort,
         ).clamped()
         setup_error = await run_in_threadpool(runtime.prepare_provider, settings.provider, settings.model)
-        problems = [setup_error] if setup_error else check_model(
+        problems = [setup_error] if setup_error else await run_in_threadpool(check_model,
             settings.provider, settings.model, api_key=runtime.api_key(settings.provider) or "",
             **({"base_url": load_app_settings().openai_base_url} if settings.provider == "openai_compatible" else {})
         )
@@ -905,9 +913,16 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
         # structured editor. Still never hand-edited as text after this: any
         # further change goes through save_manual like everything else.
         project = runtime.project(project_id)
-        raw = await file.read()
+        limit = load_app_settings().upload_size_cap_bytes
+        raw = await file.read(limit + 1)
+        if len(raw) > limit:
+            raise HTTPException(status_code=413, detail="The manual exceeds the upload limit.")
         try:
-            manual = parse_coding_manual(raw.decode("utf-8", errors="replace"))
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Save the manual as UTF-8 and try again.") from exc
+        try:
+            manual = parse_coding_manual(text)
         except ManualError as exc:
             return RedirectResponse(
                 f"/{token}/projects/{project_id}?error={quote(str(exc))}", status_code=303
@@ -945,9 +960,9 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 **endpoint_options(provider, settings),
             )
         except ManualDraftError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+            return JSONResponse({"error": redact_secret(str(exc), runtime.api_key(provider) or "")}, status_code=400)
         except ProviderError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
+            return JSONResponse({"error": redact_secret(str(exc), runtime.api_key(provider) or "")}, status_code=502)
 
         return JSONResponse(
             {
@@ -991,9 +1006,9 @@ def create_app(*, token: str, projects_root: Path | None = None) -> FastAPI:
                 **endpoint_options(provider, settings),
             )
         except (CodingSheetDraftError, ManualError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+            return JSONResponse({"error": redact_secret(str(exc), runtime.api_key(provider) or "")}, status_code=400)
         except ProviderError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
+            return JSONResponse({"error": redact_secret(str(exc), runtime.api_key(provider) or "")}, status_code=502)
         return JSONResponse(draft)
 
     @app.post(f"/{token}/projects/{{project_id}}/coding-sheet/draft/save", response_class=JSONResponse)
